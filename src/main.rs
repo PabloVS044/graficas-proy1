@@ -1,5 +1,6 @@
 mod caster;
 mod framebuffer;
+mod gamepad;
 mod maze;
 mod player;
 mod render;
@@ -96,6 +97,7 @@ fn main() {
     // `--screenshot --menu` does the same for the title screen.
     if std::env::args().any(|arg| arg == "--screenshot") {
         let menu_shot = std::env::args().any(|arg| arg == "--menu");
+        let pad_name = gamepad::name(&window);
         framebuffer.clear();
         let zbuffer =
             render::render_world(&mut framebuffer, &maze, &player, &texture_manager, block_size);
@@ -112,9 +114,9 @@ fn main() {
         }
         framebuffer.swap_buffers(&mut window, &thread, |d| {
             if menu_shot {
-                draw_menu(d, menu_background.as_ref(), 0.0);
+                draw_menu(d, menu_background.as_ref(), 0.0, pad_name.as_deref());
             } else {
-                draw_hud(d, 0, false, true);
+                draw_hud(d, 0, false, true, pad_name.as_deref());
             }
         });
         window.take_screenshot(&thread, "screenshot.png");
@@ -132,6 +134,7 @@ fn main() {
             Screen::Menu => {
                 if window.is_key_pressed(KeyboardKey::KEY_ENTER)
                     || window.is_key_pressed(KeyboardKey::KEY_SPACE)
+                    || gamepad::confirm_pressed(&window)
                 {
                     screen = Screen::Playing;
                     capture_cursor(&mut window);
@@ -152,11 +155,16 @@ fn main() {
                     }
                 }
 
-                // 2. move the player on user input. Speeds are per second, so they
-                //    need the frame time; the first frame (and any hitch) is clamped
-                //    so a long one can't teleport the player through a wall.
+                // 2. move the player on user input. Keyboard, mouse and pad all
+                //    end up in the same `Intent`, merged so that using two of them
+                //    at once does not move at double speed. Speeds are per second,
+                //    so they need the frame time; the first frame (and any hitch)
+                //    is clamped so a long one can't teleport the player through a
+                //    wall.
                 let mouse_dx = read_mouse_look(&mut window, mouse_look);
-                player::process_events(&mut player, &window, &maze, block_size, dt, mouse_dx);
+                let intent =
+                    player::keyboard_intent(&window, mouse_dx).merge(gamepad::intent(&window));
+                player::apply_intent(&mut player, intent, &maze, block_size, dt);
 
                 if let Some((gi, gj)) = goal {
                     if maze.cell_at_pixel(player.pos, block_size) == (gi, gj) {
@@ -191,16 +199,22 @@ fn main() {
 
         let fps = window.get_fps();
         let time = window.get_time() as f32;
+        let pad = gamepad::name(&window);
 
         framebuffer.swap_buffers(&mut window, &thread, |d| match screen {
-            Screen::Menu => draw_menu(d, menu_background.as_ref(), time),
-            Screen::Playing => draw_hud(d, fps, won, mouse_look),
+            Screen::Menu => draw_menu(d, menu_background.as_ref(), time, pad.as_deref()),
+            Screen::Playing => draw_hud(d, fps, won, mouse_look, pad.as_deref()),
         });
     }
 }
 
 /// The title screen: background, a dark veil over it, and the text.
-fn draw_menu(d: &mut RaylibDrawHandle, background: Option<&Texture2D>, time: f32) {
+fn draw_menu(
+    d: &mut RaylibDrawHandle,
+    background: Option<&Texture2D>,
+    time: f32,
+    pad: Option<&str>,
+) {
     if let Some(texture) = background {
         draw_background_cover(d, texture);
     }
@@ -213,17 +227,31 @@ fn draw_menu(d: &mut RaylibDrawHandle, background: Option<&Texture2D>, time: f32
     // Blinking, so the eye goes to the one line that says what to do.
     let blink = (time * 3.0).sin() * 0.5 + 0.5;
     let alpha = (150.0 + 105.0 * blink) as u8;
-    draw_centered_text(
-        d,
-        "ENTER para jugar",
-        300,
-        26,
-        Color::new(0xE8, 0xC0, 0x50, alpha),
-    );
+    let start = match pad {
+        Some(_) => "ENTER o (A) para jugar",
+        None => "ENTER para jugar",
+    };
+    draw_centered_text(d, start, 300, 26, Color::new(0xE8, 0xC0, 0x50, alpha));
 
-    draw_centered_text(d, "WASD + mouse para moverse", 380, 18, Color::LIGHTGRAY);
+    let controls = match pad {
+        Some(_) => "WASD + mouse  o  sticks del mando",
+        None => "WASD + mouse para moverse",
+    };
+    draw_centered_text(d, controls, 380, 18, Color::LIGHTGRAY);
     draw_centered_text(d, "TAB libera el cursor  |  M minimapa", 404, 18, Color::GRAY);
     draw_centered_text(d, "ESC para salir", 440, 18, Color::GRAY);
+
+    // Naming the pad is the proof it is really connected, which is the point of
+    // the whole feature.
+    if let Some(name) = pad {
+        draw_centered_text(
+            d,
+            &format!("mando: {name}"),
+            WINDOW_HEIGHT - 40,
+            16,
+            Color::new(0x8A, 0xD6, 0x9B, 255),
+        );
+    }
 }
 
 /// Draws `texture` filling the window without deforming it: the overflowing side
@@ -313,9 +341,19 @@ fn read_mouse_look(window: &mut RaylibHandle, mouse_look: bool) -> f32 {
 }
 
 /// Everything drawn on top of the raycast image, in window coordinates.
-fn draw_hud(d: &mut RaylibDrawHandle, fps: u32, won: bool, mouse_look: bool) {
+fn draw_hud(
+    d: &mut RaylibDrawHandle,
+    fps: u32,
+    won: bool,
+    mouse_look: bool,
+    pad: Option<&str>,
+) {
+    let input = match pad {
+        Some(_) => "mando + WASD",
+        None => "WASD + mouse",
+    };
     d.draw_text(
-        &format!("WASD + mouse  |  TAB: cursor  |  M: minimapa  |  {fps} FPS"),
+        &format!("{input}  |  TAB: cursor  |  M: minimapa  |  {fps} FPS"),
         10,
         10,
         18,

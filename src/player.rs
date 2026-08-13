@@ -28,6 +28,34 @@ impl Player {
 const MOVE_SPEED: f32 = 120.0; // px/s   (the old 2.0 px/frame at 60 fps)
 const ROTATION_SPEED: f32 = PI; // rad/s  (the old PI/60 per frame at 60 fps)
 
+/// What the player is asking for this frame, whatever device asked for it.
+///
+/// Every axis is in `[-1, 1]` and gets scaled by the speeds and the frame time,
+/// except `look_dx`: a mouse delta is a movement that already happened, not a
+/// speed, so it is applied as is (see `look_delta`).
+#[derive(Default, Clone, Copy)]
+pub struct Intent {
+    pub forward: f32,
+    pub strafe: f32,
+    pub turn: f32,
+    pub look_dx: f32,
+}
+
+impl Intent {
+    /// Adds two intents, keeping each axis inside `[-1, 1]`.
+    ///
+    /// The clamp is what stops pushing the stick and holding W at the same time
+    /// from moving at double speed.
+    pub fn merge(self, other: Intent) -> Intent {
+        Intent {
+            forward: (self.forward + other.forward).clamp(-1.0, 1.0),
+            strafe: (self.strafe + other.strafe).clamp(-1.0, 1.0),
+            turn: (self.turn + other.turn).clamp(-1.0, 1.0),
+            look_dx: self.look_dx + other.look_dx,
+        }
+    }
+}
+
 /// How much the view turns per pixel of mouse movement.
 pub const MOUSE_SENSITIVITY: f32 = 0.0018; // rad/px
 
@@ -53,70 +81,89 @@ pub fn wrap_angle(a: f32) -> f32 {
     a.rem_euclid(2.0 * PI)
 }
 
-/// Reads input and moves the camera.
-///
-/// `dt` is the frame time in seconds and `mouse_dx` is how many pixels the mouse
-/// moved horizontally this frame (0 when the cursor is not captured). The caller
+/// What the keyboard is asking for. `mouse_dx` is how many pixels the mouse moved
+/// horizontally this frame (0 when the cursor is not captured): the caller
 /// measures it, because keeping the pointer inside the window needs
-/// `&mut RaylibHandle` and `process_events` only borrows it.
-pub fn process_events(
-    player: &mut Player,
-    window: &RaylibHandle,
-    maze: &Maze,
-    block_size: usize,
-    dt: f32,
-    mouse_dx: f32,
-) {
-    player.a += look_delta(mouse_dx);
+/// `&mut RaylibHandle`.
+pub fn keyboard_intent(window: &RaylibHandle, mouse_dx: f32) -> Intent {
+    let mut intent = Intent {
+        look_dx: mouse_dx,
+        ..Intent::default()
+    };
 
-    if window.is_key_down(KeyboardKey::KEY_LEFT) {
-        player.a -= ROTATION_SPEED * dt;
-    }
     if window.is_key_down(KeyboardKey::KEY_RIGHT) {
-        player.a += ROTATION_SPEED * dt;
+        intent.turn += 1.0;
     }
-    player.a = wrap_angle(player.a);
+    if window.is_key_down(KeyboardKey::KEY_LEFT) {
+        intent.turn -= 1.0;
+    }
 
     // Forward/back along the view direction.
-    let mut forward = 0.0;
     if window.is_key_down(KeyboardKey::KEY_W) || window.is_key_down(KeyboardKey::KEY_UP) {
-        forward += MOVE_SPEED * dt;
+        intent.forward += 1.0;
     }
     if window.is_key_down(KeyboardKey::KEY_S) || window.is_key_down(KeyboardKey::KEY_DOWN) {
-        forward -= MOVE_SPEED * dt;
+        intent.forward -= 1.0;
     }
 
     // Strafe: sideways, without turning.
-    let mut strafe = 0.0;
     if window.is_key_down(KeyboardKey::KEY_D) {
-        strafe += MOVE_SPEED * dt;
+        intent.strafe += 1.0;
     }
     if window.is_key_down(KeyboardKey::KEY_A) {
-        strafe -= MOVE_SPEED * dt;
+        intent.strafe -= 1.0;
     }
 
-    if forward != 0.0 || strafe != 0.0 {
-        // Same trigonometry as the ray: cos on x, sin on y. The strafe direction
-        // is that vector rotated a quarter turn: (-sin, cos).
-        let (sin_a, cos_a) = player.a.sin_cos();
-        let dx = forward * cos_a - strafe * sin_a;
-        let dy = forward * sin_a + strafe * cos_a;
-        try_move(player, dx, dy, maze, block_size);
+    intent
+}
+
+/// Turns and moves the camera. Returns whether the movement was blocked by a
+/// wall on at least one axis.
+pub fn apply_intent(
+    player: &mut Player,
+    intent: Intent,
+    maze: &Maze,
+    block_size: usize,
+    dt: f32,
+) -> bool {
+    player.a += look_delta(intent.look_dx) + intent.turn * ROTATION_SPEED * dt;
+    player.a = wrap_angle(player.a);
+
+    if intent.forward == 0.0 && intent.strafe == 0.0 {
+        return false;
     }
+
+    let forward = intent.forward * MOVE_SPEED * dt;
+    let strafe = intent.strafe * MOVE_SPEED * dt;
+
+    // Same trigonometry as the ray: cos on x, sin on y. The strafe direction is
+    // that vector rotated a quarter turn: (-sin, cos).
+    let (sin_a, cos_a) = player.a.sin_cos();
+    let dx = forward * cos_a - strafe * sin_a;
+    let dy = forward * sin_a + strafe * cos_a;
+    try_move(player, dx, dy, maze, block_size)
 }
 
 /// Move one axis at a time so that sliding along a wall keeps working instead of
-/// blocking the whole movement.
-fn try_move(player: &mut Player, dx: f32, dy: f32, maze: &Maze, block_size: usize) {
+/// blocking the whole movement. Returns whether either axis was blocked.
+fn try_move(player: &mut Player, dx: f32, dy: f32, maze: &Maze, block_size: usize) -> bool {
+    let mut blocked = false;
+
     let next_x = player.pos.x + dx;
-    if !collides(next_x, player.pos.y, maze, block_size) {
+    if collides(next_x, player.pos.y, maze, block_size) {
+        blocked = true;
+    } else {
         player.pos.x = next_x;
     }
 
     let next_y = player.pos.y + dy;
-    if !collides(player.pos.x, next_y, maze, block_size) {
+    if collides(player.pos.x, next_y, maze, block_size) {
+        blocked = true;
+    } else {
         player.pos.y = next_y;
     }
+
+    blocked
 }
 
 /// The player is a small box, not a point: test its four corners so it can't
@@ -154,6 +201,49 @@ mod tests {
         assert_eq!(look_delta(-10_000.0), -capped);
         // Right at the limit nothing is lost yet.
         assert_eq!(look_delta(MAX_MOUSE_DELTA), capped);
+    }
+
+    #[test]
+    fn merging_two_devices_does_not_double_the_speed() {
+        let keyboard = Intent {
+            forward: 1.0,
+            strafe: 1.0,
+            turn: 1.0,
+            look_dx: 0.0,
+        };
+        let pad = keyboard;
+        let both = keyboard.merge(pad);
+        assert_eq!(both.forward, 1.0);
+        assert_eq!(both.strafe, 1.0);
+        assert_eq!(both.turn, 1.0);
+    }
+
+    #[test]
+    fn opposite_inputs_cancel_out() {
+        let forward = Intent {
+            forward: 1.0,
+            ..Intent::default()
+        };
+        let back = Intent {
+            forward: -1.0,
+            ..Intent::default()
+        };
+        assert_eq!(forward.merge(back).forward, 0.0);
+    }
+
+    #[test]
+    fn mouse_movement_adds_up_instead_of_clamping() {
+        // look_dx is a displacement in pixels, not a -1..1 axis: clamping it
+        // would silently cap how fast the view can turn.
+        let a = Intent {
+            look_dx: 40.0,
+            ..Intent::default()
+        };
+        let b = Intent {
+            look_dx: 30.0,
+            ..Intent::default()
+        };
+        assert_eq!(a.merge(b).look_dx, 70.0);
     }
 
     #[test]

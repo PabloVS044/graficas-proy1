@@ -21,7 +21,10 @@ cargo run --release -- --screenshot   # genera screenshot.png, HUD incluido
 
 | Control | Acción |
 |---------|--------|
-| ENTER | empezar, desde la pantalla de bienvenida |
+| ENTER / (A) | empezar, desde la pantalla de bienvenida |
+| stick izquierdo | caminar y moverse de costado |
+| stick derecho | rotar el punto de vista |
+| cruceta | caminar y moverse de costado, sin analógico |
 | mouse | rotar el punto de vista (solo horizontal) |
 | W / S | avanzar / retroceder en la dirección de vista |
 | A / D | moverse de costado sin girar (strafe) |
@@ -154,6 +157,34 @@ se descuadra apenas cambia el texto) y dibuja una sombra debajo, por lo mismo qu
 crosshair tiene contorno: texto plano sobre una foto desaparece en las zonas claras.
 
 Para revisar el menú sin abrir el juego: `cargo run --release -- --screenshot --menu`.
+
+## El mando
+
+Teclado, mouse y mando no se leen por separado dentro del movimiento: cada uno produce un
+`Intent { forward, strafe, turn, look_dx }` y se combinan con `Intent::merge`, que **suma y
+clampea cada eje a `[-1, 1]`**. Ese clamp es lo que evita que apretar W y empujar el stick
+a la vez camine al doble de velocidad. `look_dx` es la excepción y se suma sin clampear:
+son pixeles de mouse, no un eje analógico, y recortarlo limitaría en silencio qué tan
+rápido se puede girar.
+
+Partirlo así también hace que el input se pueda testear sin abrir una ventana, que es la
+única forma de probar esto: `--screenshot` no sirve para verificar un stick.
+
+`gamepad::deadzone` no solo ignora los valores chicos, los **reescala**: `[0.18, 1]` se
+estira de vuelta a `[0, 1]`. Devolver el valor crudo apenas cruza el umbral haría que el
+stick salte de 0 a 0.18 de golpe, y eso se siente como un tirón en la mano. La zona muerta
+existe porque los sticks de Xbox no descansan exactamente en cero, y sin ella la cámara
+gira sola para siempre.
+
+Si no hay mando conectado, `gamepad::intent` devuelve todo en cero, así que desenchufarlo a
+mitad de partida solo deja al teclado a cargo en vez de romper algo. El nombre del control
+se muestra en pantalla cuando está conectado — es la prueba de que está funcionando de
+verdad.
+
+**Sin vibración**: `SetGamepadVibration` existe en la API de raylib, pero en el backend
+GLFW (el que usa este build) es un no-op que solo logea `"not available on target
+platform"`. Tenerla implicaría hablarle a `/dev/input/eventX` por force-feedback, saltando
+raylib.
 
 ## La cámara y el tiempo
 
