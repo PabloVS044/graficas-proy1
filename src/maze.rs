@@ -5,6 +5,9 @@ use std::io::{BufRead, BufReader};
 /// Cells that the player (and rays) can pass through.
 pub const SPAWN: char = 'p';
 pub const GOAL: char = 'g';
+/// Where a sprite stands. It has to be walkable: an enemy is drawn as a
+/// billboard on top of the world, not as a solid block, so rays go through it.
+pub const ENEMY: char = 'e';
 const EMPTY: char = ' ';
 
 /// The maze as a 2D grid of chars, plus its dimensions so callers don't have to
@@ -58,7 +61,7 @@ impl Maze {
 
     /// Walls are every char that isn't walkable: `+`, `-` and `|` in our file.
     pub fn is_wall(&self, i: usize, j: usize) -> bool {
-        !matches!(self.cell(i, j), EMPTY | SPAWN | GOAL)
+        !matches!(self.cell(i, j), EMPTY | SPAWN | GOAL | ENEMY)
     }
 
     /// Same test, but taking world coordinates in pixels. Negative coordinates
@@ -81,6 +84,19 @@ impl Maze {
             }
         }
         None
+    }
+
+    /// Every cell holding `target`. Used to place the sprites marked with `e`.
+    pub fn find_all(&self, target: char) -> Vec<(usize, usize)> {
+        let mut found = Vec::new();
+        for (j, row) in self.grid.iter().enumerate() {
+            for (i, &cell) in row.iter().enumerate() {
+                if cell == target {
+                    found.push((i, j));
+                }
+            }
+        }
+        found
     }
 
     pub fn cell_center(&self, i: usize, j: usize, block_size: usize) -> Vector2 {

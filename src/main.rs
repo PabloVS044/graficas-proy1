@@ -3,19 +3,22 @@ mod framebuffer;
 mod maze;
 mod player;
 mod render;
+mod sprites;
+mod textures;
 
 use raylib::prelude::*;
-use std::path::{Path, PathBuf};
 
 use framebuffer::Framebuffer;
-use maze::{GOAL, Maze, SPAWN};
+use maze::{ENEMY, GOAL, Maze, SPAWN};
 use player::Player;
+use sprites::Enemy;
+use textures::{TextureManager, asset_path};
 
 const WINDOW_WIDTH: i32 = 800;
 const WINDOW_HEIGHT: i32 = 600;
 
 fn main() {
-    let maze = Maze::load(maze_path().to_str().unwrap());
+    let maze = Maze::load(asset_path("maze.txt").to_str().unwrap());
 
     // World scale: one maze cell is this many pixels. The minimap scales it down
     // on its own, so this only has to be a comfortable size to walk around in.
@@ -29,6 +32,17 @@ fn main() {
         .expect("maze has no 'p' spawn cell");
     let goal = maze.find(GOAL);
 
+    // Sprites are placed from the map itself: every `e` cell becomes an enemy
+    // standing at the center of that cell.
+    let enemies: Vec<Enemy> = maze
+        .find_all(ENEMY)
+        .into_iter()
+        .map(|(i, j)| Enemy {
+            pos: maze.cell_center(i, j, block_size),
+            kind: ENEMY,
+        })
+        .collect();
+
     let mut player = Player::new(spawn);
 
     let (mut window, thread) = raylib::init()
@@ -36,6 +50,9 @@ fn main() {
         .title("Proyecto 1 - Raycaster")
         .build();
     window.set_target_fps(60);
+
+    // Loaded once: every wall pixel drawn from here on samples these images.
+    let texture_manager = TextureManager::new();
 
     let mut framebuffer = Framebuffer::new(WINDOW_WIDTH, WINDOW_HEIGHT, Color::BLACK);
     let mut show_minimap = true;
@@ -45,8 +62,17 @@ fn main() {
     // and exits, which is handy for checking the render without playing.
     if std::env::args().any(|arg| arg == "--screenshot") {
         framebuffer.clear();
-        render::render_world(&mut framebuffer, &maze, &player, block_size);
-        render::render_minimap(&mut framebuffer, &maze, &player, block_size);
+        let zbuffer =
+            render::render_world(&mut framebuffer, &maze, &player, &texture_manager, block_size);
+        sprites::render_enemies(
+            &mut framebuffer,
+            &player,
+            &enemies,
+            &texture_manager,
+            &zbuffer,
+            block_size,
+        );
+        render::render_minimap(&mut framebuffer, &maze, &player, &enemies, block_size);
         framebuffer.swap_buffers(&mut window, &thread, |d| draw_hud(d, 0, false));
         window.take_screenshot(&thread, "screenshot.png");
         return;
@@ -70,10 +96,20 @@ fn main() {
         // 3. clear framebuffer
         framebuffer.clear();
 
-        // 4. draw stuff: the 3D world first, then the minimap on top of it
-        render::render_world(&mut framebuffer, &maze, &player, block_size);
+        // 4. draw stuff: the 3D world first (which fills the z-buffer), then the
+        //    sprites depth-tested against it, and the minimap on top of both
+        let zbuffer =
+            render::render_world(&mut framebuffer, &maze, &player, &texture_manager, block_size);
+        sprites::render_enemies(
+            &mut framebuffer,
+            &player,
+            &enemies,
+            &texture_manager,
+            &zbuffer,
+            block_size,
+        );
         if show_minimap {
-            render::render_minimap(&mut framebuffer, &maze, &player, block_size);
+            render::render_minimap(&mut framebuffer, &maze, &player, &enemies, block_size);
         }
 
         let fps = window.get_fps();
@@ -161,14 +197,4 @@ fn draw_crosshair(d: &mut RaylibDrawHandle) {
         );
         d.draw_rectangle(x, y, width, height, Color::WHITESMOKE);
     }
-}
-
-/// Look for the maze next to the working directory first, then fall back to the
-/// project root so `cargo run` works from anywhere.
-fn maze_path() -> PathBuf {
-    let local = PathBuf::from("maze.txt");
-    if local.exists() {
-        return local;
-    }
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("maze.txt")
 }

@@ -1,9 +1,11 @@
 use raylib::prelude::*;
 
-use crate::caster::cast_ray;
+use crate::caster::{Side, cast_ray};
 use crate::framebuffer::Framebuffer;
-use crate::maze::{GOAL, Maze, SPAWN};
+use crate::maze::{ENEMY, GOAL, Maze, SPAWN};
 use crate::player::Player;
+use crate::sprites::Enemy;
+use crate::textures::TextureManager;
 
 /// Rays drawn in the minimap. Enough to see the shape of the view cone without
 /// hiding the map under a solid white fan.
@@ -21,18 +23,24 @@ const MINIMAP_BORDER: i32 = 2;
 const MAX_SHADE_DISTANCE: f32 = 500.0;
 const MIN_SHADE: f32 = 0.30;
 
+/// How much of its color something keeps at `distance`. Shared by walls and
+/// sprites so an enemy is lit like the wall it stands in front of.
+pub fn shade_factor(distance: f32) -> f32 {
+    (1.0 - distance / MAX_SHADE_DISTANCE).clamp(MIN_SHADE, 1.0)
+}
+
 fn cell_color(cell: char) -> Color {
     match cell {
         '+' => Color::new(0x3A, 0x3F, 0x6B, 255), // corners
         '-' => Color::new(0x4A, 0x52, 0x8A, 255), // horizontal walls
         '|' => Color::new(0x33, 0x38, 0x5E, 255), // vertical walls
         GOAL => Color::new(0x5E, 0xD9, 0x8A, 255),
-        SPAWN => Color::new(0x2A, 0x2D, 0x3E, 255),
-        _ => Color::new(0x2A, 0x2D, 0x3E, 255), // floor
+        SPAWN | ENEMY => Color::new(0x2A, 0x2D, 0x3E, 255), // walkable, drawn as floor
+        _ => Color::new(0x2A, 0x2D, 0x3E, 255),             // floor
     }
 }
 
-fn shade(color: Color, factor: f32) -> Color {
+pub fn shade(color: Color, factor: f32) -> Color {
     Color::new(
         (color.r as f32 * factor) as u8,
         (color.g as f32 * factor) as u8,
@@ -56,6 +64,7 @@ pub fn render_minimap(
     framebuffer: &mut Framebuffer,
     maze: &Maze,
     player: &Player,
+    enemies: &[Enemy],
     block_size: usize,
 ) {
     let world_width = maze.world_width(block_size);
@@ -95,6 +104,11 @@ pub fn render_minimap(
         cast_ray(framebuffer, maze, player, a, block_size, true);
     }
 
+    framebuffer.set_current_color(Color::new(0xE8, 0xC0, 0x50, 255));
+    for enemy in enemies {
+        framebuffer.circle(enemy.pos.x as i32, enemy.pos.y as i32, 2);
+    }
+
     framebuffer.set_current_color(Color::new(0xFF, 0x6B, 0x6B, 255));
     framebuffer.circle(player.pos.x as i32, player.pos.y as i32, 2);
 
@@ -103,13 +117,18 @@ pub fn render_minimap(
 
 /// First-person view: one ray per screen column, each one drawn as a vertical
 /// "stake" whose height is inversely proportional to the distance to the wall.
+///
+/// Returns the z-buffer: the perpendicular distance to the wall drawn on each
+/// column. The sprite pass needs it to know when a wall is in front of an enemy.
 pub fn render_world(
     framebuffer: &mut Framebuffer,
     maze: &Maze,
     player: &Player,
+    texture_manager: &TextureManager,
     block_size: usize,
-) {
+) -> Vec<f32> {
     let num_rays = framebuffer.width as usize;
+    let mut zbuffer = vec![f32::INFINITY; num_rays];
     let hw = framebuffer.width as f32 / 2.0; // precalculated half width
     let hh = framebuffer.height as f32 / 2.0; // precalculated half height
 
@@ -140,8 +159,44 @@ pub fn render_world(
         let stake_top = hh - (stake_height / 2.0);
         let stake_bottom = hh + (stake_height / 2.0);
 
-        let factor = (1.0 - distance_to_wall / MAX_SHADE_DISTANCE).clamp(MIN_SHADE, 1.0);
-        framebuffer.set_current_color(shade(cell_color(intersect.impact), factor));
-        framebuffer.vertical_line(i as i32, stake_top as i32, stake_bottom as i32);
+        zbuffer[i] = distance_to_wall;
+
+        // Faces on a horizontal plane are drawn a bit darker than the ones on a
+        // vertical plane. Without it, two perpendicular faces of the same block
+        // share the exact same texture and distance, and the corner between them
+        // disappears.
+        let factor = shade_factor(distance_to_wall)
+            * match intersect.side {
+                Side::Horizontal => 0.75,
+                Side::Vertical => 1.0,
+            };
+
+        match texture_manager.size(intersect.impact) {
+            Some((tex_width, tex_height)) => {
+                // Which column of the texture wraps around this slice of wall.
+                let tx = (intersect.tx * tex_width as f32) as u32;
+
+                // Only the visible part is painted, but the unclamped stake_top
+                // and stake_bottom stay in the formula: clamping them would
+                // stretch the texture as soon as the wall grows past the screen.
+                let first = stake_top.max(0.0) as i32;
+                let last = (stake_bottom.min(framebuffer.height as f32 - 1.0)) as i32;
+
+                for y in first..=last {
+                    let ty = ((y as f32 - stake_top) / (stake_bottom - stake_top)
+                        * tex_height as f32) as u32;
+                    if let Some(color) = texture_manager.get_pixel(intersect.impact, tx, ty) {
+                        framebuffer.set_pixel_color(i as i32, y, shade(color, factor));
+                    }
+                }
+            }
+            // No texture for this char: the flat-color stake of before.
+            None => {
+                framebuffer.set_current_color(shade(cell_color(intersect.impact), factor));
+                framebuffer.vertical_line(i as i32, stake_top as i32, stake_bottom as i32);
+            }
+        }
     }
+
+    zbuffer
 }
