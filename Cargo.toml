@@ -1,0 +1,12 @@
+[package]
+name = "proy1"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+raylib = { version = "6.0.0", features = ["SUPPORT_IMAGE_GENERATION", "SUPPORT_IMAGE_EXPORT", "SUPPORT_FILEFORMAT_PNG"] }
+
+# The raycaster marches one ray per screen column every frame, so an optimized
+# build is required for a smooth framerate. Keep some optimization in debug too.
+[profile.dev]
+opt-level = 2
