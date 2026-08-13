@@ -19,12 +19,37 @@ cargo run --release -- --screenshot   # genera screenshot.png, HUD incluido
 
 ## Controles
 
-| Tecla | Acción |
-|-------|--------|
-| ← / → | rotar el punto de vista |
-| ↑ / ↓ | avanzar / retroceder en la dirección de vista |
+| Control | Acción |
+|---------|--------|
+| ENTER | empezar, desde la pantalla de bienvenida |
+| mouse | rotar el punto de vista (solo horizontal) |
+| W / S | avanzar / retroceder en la dirección de vista |
+| A / D | moverse de costado sin girar (strafe) |
+| ← / → | rotar, alternativa al mouse |
+| ↑ / ↓ | avanzar / retroceder, alias de W/S |
+| TAB   | soltar / recapturar el cursor |
 | M     | mostrar / ocultar el minimapa |
 | ESC   | salir |
+
+El cursor se captura al arrancar, como en cualquier FPS. `TAB` lo libera (y el HUD lo
+avisa, porque un cursor suelto se confunde fácil con una cámara rota) y lo vuelve a
+capturar.
+
+Capturarlo tiene una trampa que costó dos intentos. Bajo XWayland el lock de cursor no
+encierra nada, así que un barrido horizontal largo saca el puntero de la ventana, aparece
+en el escritorio y el personaje deja de girar sin ninguna señal de por qué. La solución es
+medir el movimiento contra el centro de la ventana y devolver el puntero ahí en cada frame
+(`read_mouse_look`).
+
+Pero eso **solo funciona con el cursor escondido, no deshabilitado**. `disable_cursor()`
+pone a GLFW en `CURSOR_DISABLED`, y en ese modo `glfwSetCursorPos` deja de mover el puntero
+real: solo actualiza una posición *virtual* interna. O sea que el recentrado no hacía nada
+y el puntero se escapaba igual. Con `hide_cursor()` (modo `CURSOR_HIDDEN`) el warp sí es un
+`XWarpPointer` de verdad, y ahí el puntero no se va a ningún lado.
+
+Centrar al capturar (`capture_cursor`) tampoco es cosmético: como el movimiento se mide
+contra el centro, arrancar o volver de `TAB` con el puntero en otro lado se leería como un
+movimiento gigante y la cámara pegaría un salto.
 
 El jugador arranca en la celda `p` y gana al llegar a la `g` (aparece `GANASTE!`
 en pantalla). Hay colisión con paredes, con deslizamiento: al chocar en diagonal
@@ -101,6 +126,59 @@ stake_height                 = (block_size / distance_to_wall) * distance_to_pro
   **perpendicular** al plano de proyección. Sin esa corrección las paredes se
   abomban en los bordes de la pantalla (efecto ojo de pez).
 - Una pared mide un bloque de alto, de ahí el `block_size` en el numerador.
+
+## Pantallas
+
+`Screen { Menu, Playing }` en `main.rs`. El juego abre en la bienvenida y `ENTER` (o
+`SPACE`) entra al laberinto. Faltan los estados de selección de nivel y de éxito.
+
+En `Menu` no se llama a `process_events` ni se chequea la meta: si se llamara, el jugador
+se movería detrás del menú y podría ganar sin haber jugado. El cursor también depende del
+estado — libre en la bienvenida, capturado al empezar.
+
+El fondo sale de `MENU_BACKGROUNDS`, con la misma lógica de candidatos que las texturas de
+pared: gana el primero que cargue, hoy `assets/menu.png` y si no `assets/pared.png` como
+provisorio. Se carga como `Texture2D` de GPU y no por el `TextureManager`: ese guarda
+pixeles en CPU para muestrearlos de a uno con `tx`/`ty`, y acá la imagen se dibuja entera
+de una vez, dentro del closure del HUD (o sea después del framebuffer, tapándolo).
+
+`draw_background_cover` recorta en vez de estirar: toma el pedazo centrado más grande que
+tenga la proporción de la ventana. Las imágenes que usamos son verticales, y estiradas a
+800×600 se ven deformadas.
+
+En el menú no se rayescanea nada: la imagen cubre la pantalla entera sobre un buffer ya
+limpio, así que renderizar un frame que nadie va a ver sería trabajo tirado.
+
+`draw_centered_text` mide el ancho con `measure_text` en vez de usar un offset a ojo (que
+se descuadra apenas cambia el texto) y dibuja una sombra debajo, por lo mismo que el
+crosshair tiene contorno: texto plano sobre una foto desaparece en las zonas claras.
+
+Para revisar el menú sin abrir el juego: `cargo run --release -- --screenshot --menu`.
+
+## La cámara y el tiempo
+
+`process_events` recibe el `dt` del frame y **las velocidades del teclado son por
+segundo**: `MOVE_SPEED` en px/s y `ROTATION_SPEED` en rad/s, multiplicadas por `dt`. Antes
+estaban en px *por frame*, o sea atadas a los 60 FPS del `set_target_fps`: en una máquina
+más lenta el jugador caminaba más lento. El `dt` se recorta a 0.1 s, si no el primer frame
+(o un tirón mientras otra ventana se lleva la CPU) se integra como un paso gigante y puede
+teletransportar al jugador a través de una pared.
+
+El **delta del mouse no se multiplica por `dt`**, y es la parte que más se equivoca: un
+delta ya es un desplazamiento, no una velocidad. Escalarlo por el tiempo haría que el
+mismo movimiento de la mano gire distinto según los FPS, que es justo lo contrario de lo
+que se busca.
+
+Sí se recorta a ±200 px por frame. Al volver de un alt-tab o al arrastrar la ventana llega
+un salto enorme de una sola vez, y sin el recorte la cámara pega un latigazo.
+
+El strafe reusa `try_move` sin tocarlo: la dirección lateral es la de vista rotada un
+cuarto de vuelta, `(-sin a, cos a)`, y como `try_move` ya prueba un eje a la vez, deslizar
+de costado contra una pared sigue funcionando.
+
+Las funciones `look_delta` y `wrap_angle` están separadas del input justamente para poder
+testearlas sin abrir una ventana: `cargo test` cubre el signo del giro, la proporción, el
+recorte simétrico y que el ángulo no se escape de `[0, 2π)`.
 
 ## Texturas
 

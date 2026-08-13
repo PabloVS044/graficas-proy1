@@ -17,6 +17,25 @@ use textures::{TextureManager, asset_path};
 const WINDOW_WIDTH: i32 = 800;
 const WINDOW_HEIGHT: i32 = 600;
 
+/// Upper bound for the frame time fed to the movement code, in seconds. Without
+/// it, the very first frame (or a hitch while another window steals the CPU)
+/// would be integrated as one huge step.
+const MAX_FRAME_TIME: f32 = 0.1;
+
+const TITLE: &str = "PROYECTO 1 - RAYCASTER";
+
+/// Background of the title screen, in order of preference: the first one that
+/// loads is used. `pared.png` is the placeholder until there is a proper
+/// `menu.png`.
+const MENU_BACKGROUNDS: [&str; 2] = ["assets/menu.png", "assets/pared.png"];
+
+/// Which screen the game is on. The level selector and the success screen are
+/// the two states still missing here.
+enum Screen {
+    Menu,
+    Playing,
+}
+
 fn main() {
     let maze = Maze::load(asset_path("maze.txt").to_str().unwrap());
 
@@ -58,9 +77,25 @@ fn main() {
     let mut show_minimap = true;
     let mut won = false;
 
+    // Background for the title screen. It is a plain GPU texture, not a
+    // `TextureManager` entry: that one keeps pixels on the CPU to sample them one
+    // by one with tx/ty, and here the image is blitted whole.
+    //
+    // Same idea as the wall textures: the first candidate that loads wins, so
+    // dropping a `menu.png` in `assets/` takes over without touching any code.
+    let menu_background = MENU_BACKGROUNDS.iter().find_map(|path| {
+        let full = asset_path(path);
+        window.load_texture(&thread, full.to_str().unwrap_or(path)).ok()
+    });
+    if menu_background.is_none() {
+        eprintln!("aviso: sin fondo de menú (se buscó {MENU_BACKGROUNDS:?}); queda en negro");
+    }
+
     // `cargo run -- --screenshot` draws one full frame, saves the window to disk
     // and exits, which is handy for checking the render without playing.
+    // `--screenshot --menu` does the same for the title screen.
     if std::env::args().any(|arg| arg == "--screenshot") {
+        let menu_shot = std::env::args().any(|arg| arg == "--menu");
         framebuffer.clear();
         let zbuffer =
             render::render_world(&mut framebuffer, &maze, &player, &texture_manager, block_size);
@@ -72,24 +107,62 @@ fn main() {
             &zbuffer,
             block_size,
         );
-        render::render_minimap(&mut framebuffer, &maze, &player, &enemies, block_size);
-        framebuffer.swap_buffers(&mut window, &thread, |d| draw_hud(d, 0, false));
+        if !menu_shot {
+            render::render_minimap(&mut framebuffer, &maze, &player, &enemies, block_size);
+        }
+        framebuffer.swap_buffers(&mut window, &thread, |d| {
+            if menu_shot {
+                draw_menu(d, menu_background.as_ref(), 0.0);
+            } else {
+                draw_hud(d, 0, false, true);
+            }
+        });
         window.take_screenshot(&thread, "screenshot.png");
         return;
     }
 
+    // The title screen owns the cursor: it is only captured once the game starts.
+    let mut screen = Screen::Menu;
+    let mut mouse_look = true;
+
     while !window.window_should_close() {
-        // 1. show or hide the minimap
-        if window.is_key_pressed(KeyboardKey::KEY_M) {
-            show_minimap = !show_minimap;
-        }
+        let dt = window.get_frame_time().min(MAX_FRAME_TIME);
 
-        // 2. move the player on user input
-        player::process_events(&mut player, &window, &maze, block_size);
+        match screen {
+            Screen::Menu => {
+                if window.is_key_pressed(KeyboardKey::KEY_ENTER)
+                    || window.is_key_pressed(KeyboardKey::KEY_SPACE)
+                {
+                    screen = Screen::Playing;
+                    capture_cursor(&mut window);
+                    mouse_look = true;
+                }
+            }
+            Screen::Playing => {
+                // 1. show or hide the minimap, release or recapture the cursor
+                if window.is_key_pressed(KeyboardKey::KEY_M) {
+                    show_minimap = !show_minimap;
+                }
+                if window.is_key_pressed(KeyboardKey::KEY_TAB) {
+                    mouse_look = !mouse_look;
+                    if mouse_look {
+                        capture_cursor(&mut window);
+                    } else {
+                        release_cursor(&mut window);
+                    }
+                }
 
-        if let Some((gi, gj)) = goal {
-            if maze.cell_at_pixel(player.pos, block_size) == (gi, gj) {
-                won = true;
+                // 2. move the player on user input. Speeds are per second, so they
+                //    need the frame time; the first frame (and any hitch) is clamped
+                //    so a long one can't teleport the player through a wall.
+                let mouse_dx = read_mouse_look(&mut window, mouse_look);
+                player::process_events(&mut player, &window, &maze, block_size, dt, mouse_dx);
+
+                if let Some((gi, gj)) = goal {
+                    if maze.cell_at_pixel(player.pos, block_size) == (gi, gj) {
+                        won = true;
+                    }
+                }
             }
         }
 
@@ -97,36 +170,169 @@ fn main() {
         framebuffer.clear();
 
         // 4. draw stuff: the 3D world first (which fills the z-buffer), then the
-        //    sprites depth-tested against it, and the minimap on top of both
-        let zbuffer =
-            render::render_world(&mut framebuffer, &maze, &player, &texture_manager, block_size);
-        sprites::render_enemies(
-            &mut framebuffer,
-            &player,
-            &enemies,
-            &texture_manager,
-            &zbuffer,
-            block_size,
-        );
-        if show_minimap {
-            render::render_minimap(&mut framebuffer, &maze, &player, &enemies, block_size);
+        //    sprites depth-tested against it, and the minimap on top of both.
+        //    The menu draws none of it: it is a full screen image over a cleared
+        //    buffer, so raycasting a frame nobody sees would be wasted work.
+        if matches!(screen, Screen::Playing) {
+            let zbuffer =
+                render::render_world(&mut framebuffer, &maze, &player, &texture_manager, block_size);
+            sprites::render_enemies(
+                &mut framebuffer,
+                &player,
+                &enemies,
+                &texture_manager,
+                &zbuffer,
+                block_size,
+            );
+            if show_minimap {
+                render::render_minimap(&mut framebuffer, &maze, &player, &enemies, block_size);
+            }
         }
 
         let fps = window.get_fps();
+        let time = window.get_time() as f32;
 
-        framebuffer.swap_buffers(&mut window, &thread, |d| draw_hud(d, fps, won));
+        framebuffer.swap_buffers(&mut window, &thread, |d| match screen {
+            Screen::Menu => draw_menu(d, menu_background.as_ref(), time),
+            Screen::Playing => draw_hud(d, fps, won, mouse_look),
+        });
     }
 }
 
+/// The title screen: background, a dark veil over it, and the text.
+fn draw_menu(d: &mut RaylibDrawHandle, background: Option<&Texture2D>, time: f32) {
+    if let Some(texture) = background {
+        draw_background_cover(d, texture);
+    }
+
+    // Veil, so the text stays readable over any image.
+    d.draw_rectangle(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, Color::new(0, 0, 0, 130));
+
+    draw_centered_text(d, TITLE, 190, 40, Color::WHITESMOKE);
+
+    // Blinking, so the eye goes to the one line that says what to do.
+    let blink = (time * 3.0).sin() * 0.5 + 0.5;
+    let alpha = (150.0 + 105.0 * blink) as u8;
+    draw_centered_text(
+        d,
+        "ENTER para jugar",
+        300,
+        26,
+        Color::new(0xE8, 0xC0, 0x50, alpha),
+    );
+
+    draw_centered_text(d, "WASD + mouse para moverse", 380, 18, Color::LIGHTGRAY);
+    draw_centered_text(d, "TAB libera el cursor  |  M minimapa", 404, 18, Color::GRAY);
+    draw_centered_text(d, "ESC para salir", 440, 18, Color::GRAY);
+}
+
+/// Draws `texture` filling the window without deforming it: the overflowing side
+/// is cropped instead of squashed. The images used here are portrait, so
+/// stretching them to a 800x600 window would be very visible.
+fn draw_background_cover(d: &mut RaylibDrawHandle, texture: &Texture2D) {
+    let (tw, th) = (texture.width as f32, texture.height as f32);
+    let window_ratio = WINDOW_WIDTH as f32 / WINDOW_HEIGHT as f32;
+    let texture_ratio = tw / th;
+
+    // Take the biggest centered piece of the image with the window's proportions.
+    let (src_w, src_h) = if texture_ratio > window_ratio {
+        (th * window_ratio, th) // too wide: crop the sides
+    } else {
+        (tw, tw / window_ratio) // too tall: crop top and bottom
+    };
+
+    d.draw_texture_pro(
+        texture,
+        Rectangle::new((tw - src_w) / 2.0, (th - src_h) / 2.0, src_w, src_h),
+        Rectangle::new(0.0, 0.0, WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32),
+        Vector2::zero(),
+        0.0,
+        Color::WHITE,
+    );
+}
+
+/// Text centered horizontally, with a dark shadow under it.
+///
+/// The width is measured instead of guessed: an eyeballed offset goes crooked as
+/// soon as the string changes. The shadow is the same reason the crosshair has an
+/// outline — plain text over a photo disappears on the light patches.
+fn draw_centered_text(d: &mut RaylibDrawHandle, text: &str, y: i32, size: i32, color: Color) {
+    let x = (WINDOW_WIDTH - d.measure_text(text, size)) / 2;
+    d.draw_text(text, x + 2, y + 2, size, Color::new(0, 0, 0, 180));
+    d.draw_text(text, x, y, size, color);
+}
+
+/// Center of the window, where the pointer is parked while the mouse aims.
+fn window_center() -> Vector2 {
+    Vector2::new(WINDOW_WIDTH as f32 / 2.0, WINDOW_HEIGHT as f32 / 2.0)
+}
+
+/// Hides the cursor and parks it in the center.
+///
+/// It hides the cursor instead of disabling it, and that distinction is the
+/// whole trick. `disable_cursor` puts GLFW in `CURSOR_DISABLED`, and in that mode
+/// `glfwSetCursorPos` stops warping the real pointer: it only updates an internal
+/// *virtual* position. So the re-centering below would do nothing, and since the
+/// pointer grab does not confine anything under XWayland, the pointer would walk
+/// out of the window and the camera would stop turning. In `CURSOR_HIDDEN` the
+/// warp is a real `XWarpPointer`, which is what keeps the pointer inside.
+///
+/// Centering is not cosmetic either: the mouse look measures against the center,
+/// so starting (or coming back from TAB) with the pointer anywhere else would be
+/// read as one big movement and snap the camera.
+fn capture_cursor(window: &mut RaylibHandle) {
+    window.hide_cursor();
+    window.set_mouse_position(window_center());
+}
+
+/// Gives the cursor back to the desktop.
+fn release_cursor(window: &mut RaylibHandle) {
+    window.enable_cursor(); // also undoes `hide_cursor`
+}
+
+/// How many pixels the mouse moved horizontally this frame, and puts the pointer
+/// back in the middle of the window.
+///
+/// The movement is measured against the center and the pointer is warped back
+/// there every frame, because the cursor lock does not confine anything under
+/// XWayland: a long horizontal sweep walks the pointer out of the window, onto
+/// the desktop, and the camera silently stops turning. Warping it back keeps it
+/// inside whatever the compositor does — see `capture_cursor` for why the cursor
+/// is hidden rather than disabled, which is what makes the warp actually work.
+fn read_mouse_look(window: &mut RaylibHandle, mouse_look: bool) -> f32 {
+    // Not while the cursor is released, and not while another window has focus:
+    // warping the pointer then would fight the desktop.
+    if !mouse_look || !window.is_window_focused() {
+        return 0.0;
+    }
+
+    let center = window_center();
+    let dx = window.get_mouse_position().x - center.x;
+    window.set_mouse_position(center);
+    dx
+}
+
 /// Everything drawn on top of the raycast image, in window coordinates.
-fn draw_hud(d: &mut RaylibDrawHandle, fps: u32, won: bool) {
+fn draw_hud(d: &mut RaylibDrawHandle, fps: u32, won: bool, mouse_look: bool) {
     d.draw_text(
-        &format!("M: minimapa  |  {fps} FPS"),
+        &format!("WASD + mouse  |  TAB: cursor  |  M: minimapa  |  {fps} FPS"),
         10,
         10,
         18,
         Color::WHITESMOKE,
     );
+
+    // While the cursor is free the mouse doesn't aim, and that is easy to
+    // mistake for the camera being broken. Say it on screen.
+    if !mouse_look {
+        d.draw_text(
+            "cursor libre - TAB para volver a mirar con el mouse",
+            10,
+            32,
+            18,
+            Color::new(0xE8, 0xC0, 0x50, 255),
+        );
+    }
 
     draw_crosshair(d);
 
