@@ -30,7 +30,7 @@ const TITLE: &str = "PROYECTO 1 - RAYCASTER";
 /// `menu.png`.
 const MENU_BACKGROUNDS: [&str; 2] = ["assets/menu.png", "assets/pared.png"];
 
-/// Which screen the game is on. The level selector is the one still missing.
+/// Which screen the game is on.
 #[derive(PartialEq)]
 enum Screen {
     Menu,
@@ -38,16 +38,41 @@ enum Screen {
     Victory,
 }
 
-/// The two things offered after winning.
-const VICTORY_OPTIONS: [&str; 2] = ["Seguir explorando", "Reiniciar el nivel"];
+/// The levels offered on the title screen, easiest first.
+const LEVELS: [(&str, &str); 3] = [
+    ("1 - Facil", "maze.txt"),
+    ("2 - Normal", "maze2.txt"),
+    ("3 - Dificil", "maze3.txt"),
+];
+
+/// What is offered after winning.
+const VICTORY_OPTIONS: [&str; 3] = [
+    "Seguir explorando",
+    "Reiniciar el nivel",
+    "Elegir otro nivel",
+];
 const OPTION_FREEROAM: usize = 0;
 const OPTION_RESTART: usize = 1;
+const OPTION_MENU: usize = 2;
 
-fn main() {
-    let maze = Maze::load(asset_path("maze.txt").to_str().unwrap());
+/// Everything that changes when a different maze is loaded.
+///
+/// It is all derived from the file, so switching levels is just building another
+/// one of these: nothing else in the game holds on to the old maze.
+struct Level {
+    maze: Maze,
+    block_size: usize,
+    spawn: Vector2,
+    goal: Option<(usize, usize)>,
+    enemies: Vec<Enemy>,
+}
 
-    // World scale: one maze cell is this many pixels. The minimap scales it down
-    // on its own, so this only has to be a comfortable size to walk around in.
+fn load_level(file: &str) -> Level {
+    let maze = Maze::load(asset_path(file).to_str().unwrap());
+
+    // World scale: one maze cell is this many pixels. Bigger mazes get smaller
+    // cells so the whole thing still fits the same window. The minimap scales it
+    // down on its own, so this only has to be comfortable to walk around in.
     let block_size = (WINDOW_WIDTH as usize / maze.width)
         .min(WINDOW_HEIGHT as usize / maze.height)
         .max(8);
@@ -55,7 +80,7 @@ fn main() {
     let spawn = maze
         .find(SPAWN)
         .map(|(i, j)| maze.cell_center(i, j, block_size))
-        .expect("maze has no 'p' spawn cell");
+        .unwrap_or_else(|| panic!("el laberinto '{file}' no tiene celda 'p' de spawn"));
     let goal = maze.find(GOAL);
 
     // Sprites are placed from the map itself: every `e` cell becomes an enemy
@@ -69,7 +94,27 @@ fn main() {
         })
         .collect();
 
-    let mut player = Player::new(spawn);
+    Level {
+        maze,
+        block_size,
+        spawn,
+        goal,
+        enemies,
+    }
+}
+
+fn main() {
+    // `--level 2` starts on that level. Only useful together with `--screenshot`,
+    // to look at a maze without walking to it.
+    let mut level_choice = std::env::args()
+        .skip_while(|arg| arg != "--level")
+        .nth(1)
+        .and_then(|n| n.parse::<usize>().ok())
+        .map(|n| n.saturating_sub(1).min(LEVELS.len() - 1))
+        .unwrap_or(0);
+    let mut level = load_level(LEVELS[level_choice].1);
+
+    let mut player = Player::new(level.spawn);
 
     let (mut window, thread) = raylib::init()
         .size(WINDOW_WIDTH, WINDOW_HEIGHT)
@@ -102,7 +147,9 @@ fn main() {
     // dropping a `menu.png` in `assets/` takes over without touching any code.
     let menu_background = MENU_BACKGROUNDS.iter().find_map(|path| {
         let full = asset_path(path);
-        window.load_texture(&thread, full.to_str().unwrap_or(path)).ok()
+        window
+            .load_texture(&thread, full.to_str().unwrap_or(path))
+            .ok()
     });
     if menu_background.is_none() {
         eprintln!("aviso: sin fondo de menú (se buscó {MENU_BACKGROUNDS:?}); queda en negro");
@@ -117,22 +164,33 @@ fn main() {
         let victory_shot = std::env::args().any(|arg| arg == "--victory");
         let pad_name = gamepad::name(&window);
         framebuffer.clear();
-        let zbuffer =
-            render::render_world(&mut framebuffer, &maze, &player, &texture_manager, block_size);
+        let zbuffer = render::render_world(
+            &mut framebuffer,
+            &level.maze,
+            &player,
+            &texture_manager,
+            level.block_size,
+        );
         sprites::render_enemies(
             &mut framebuffer,
             &player,
-            &enemies,
+            &level.enemies,
             &texture_manager,
             &zbuffer,
-            block_size,
+            level.block_size,
         );
         if !menu_shot && !victory_shot {
-            render::render_minimap(&mut framebuffer, &maze, &player, &enemies, block_size);
+            render::render_minimap(
+                &mut framebuffer,
+                &level.maze,
+                &player,
+                &level.enemies,
+                level.block_size,
+            );
         }
         framebuffer.swap_buffers(&mut window, &thread, |d| {
             if menu_shot {
-                draw_menu(d, menu_background.as_ref(), 0.0, pad_name.as_deref());
+                draw_menu(d, menu_background.as_ref(), 0.0, 0, pad_name.as_deref());
             } else if victory_shot {
                 draw_victory(d, OPTION_FREEROAM, 42.7, pad_name.as_deref());
             } else {
@@ -152,10 +210,17 @@ fn main() {
 
         match screen {
             Screen::Menu => {
-                if window.is_key_pressed(KeyboardKey::KEY_ENTER)
-                    || window.is_key_pressed(KeyboardKey::KEY_SPACE)
-                    || gamepad::confirm_pressed(&window)
-                {
+                let step = menu_step(&window, &mut pad_menu_rested);
+                if step != 0 {
+                    level_choice = wrap_choice(level_choice, step, LEVELS.len());
+                }
+
+                if confirm_pressed(&window) {
+                    // The maze only gets read here: everything derived from it
+                    // (scale, spawn, goal, enemies) is rebuilt with it.
+                    level = load_level(LEVELS[level_choice].1);
+                    player = Player::new(level.spawn);
+                    freeroam = false;
                     screen = Screen::Playing;
                     capture_cursor(&mut window);
                     mouse_look = true;
@@ -185,60 +250,43 @@ fn main() {
                 let mouse_dx = read_mouse_look(&mut window, mouse_look);
                 let intent =
                     player::keyboard_intent(&window, mouse_dx).merge(gamepad::intent(&window));
-                player::apply_intent(&mut player, intent, &maze, block_size, dt);
+                player::apply_intent(&mut player, intent, &level.maze, level.block_size, dt);
 
-                if let Some((gi, gj)) = goal {
-                    if !freeroam && maze.cell_at_pixel(player.pos, block_size) == (gi, gj) {
-                        screen = Screen::Victory;
-                        run_time = (window.get_time() - run_started) as f32;
-                        victory_choice = OPTION_FREEROAM;
-                        release_cursor(&mut window);
-                    }
+                let on_goal =
+                    level.goal == Some(level.maze.cell_at_pixel(player.pos, level.block_size));
+                if on_goal && !freeroam {
+                    screen = Screen::Victory;
+                    run_time = (window.get_time() - run_started) as f32;
+                    victory_choice = OPTION_FREEROAM;
+                    release_cursor(&mut window);
                 }
             }
             Screen::Victory => {
-                // Move the selection: one step per key press, and one step per
-                // *new* push of the pad (hence the latch).
-                let pad_axis = gamepad::menu_axis(&window);
-                let mut step = 0;
-                if window.is_key_pressed(KeyboardKey::KEY_UP)
-                    || window.is_key_pressed(KeyboardKey::KEY_W)
-                {
-                    step -= 1;
-                }
-                if window.is_key_pressed(KeyboardKey::KEY_DOWN)
-                    || window.is_key_pressed(KeyboardKey::KEY_S)
-                {
-                    step += 1;
-                }
-                if pad_axis != 0 && pad_menu_rested {
-                    step += pad_axis;
-                }
-                pad_menu_rested = pad_axis == 0;
-
+                let step = menu_step(&window, &mut pad_menu_rested);
                 if step != 0 {
-                    // rem_euclid so that going up from the first option wraps to
-                    // the last one instead of going negative.
-                    let count = VICTORY_OPTIONS.len() as i32;
-                    victory_choice = (victory_choice as i32 + step).rem_euclid(count) as usize;
+                    victory_choice = wrap_choice(victory_choice, step, VICTORY_OPTIONS.len());
                 }
 
-                if window.is_key_pressed(KeyboardKey::KEY_ENTER)
-                    || window.is_key_pressed(KeyboardKey::KEY_SPACE)
-                    || gamepad::confirm_pressed(&window)
-                {
-                    if victory_choice == OPTION_RESTART {
-                        player = Player::new(spawn);
-                        freeroam = false;
-                        run_started = window.get_time();
-                    } else {
+                if confirm_pressed(&window) {
+                    match victory_choice {
+                        OPTION_RESTART => {
+                            player = Player::new(level.spawn);
+                            freeroam = false;
+                            run_started = window.get_time();
+                            screen = Screen::Playing;
+                            capture_cursor(&mut window);
+                            mouse_look = true;
+                        }
+                        OPTION_MENU => screen = Screen::Menu,
                         // Free roam: the level stays as it is and the goal stops
                         // counting, so walking over it again changes nothing.
-                        freeroam = true;
+                        _ => {
+                            freeroam = true;
+                            screen = Screen::Playing;
+                            capture_cursor(&mut window);
+                            mouse_look = true;
+                        }
                     }
-                    screen = Screen::Playing;
-                    capture_cursor(&mut window);
-                    mouse_look = true;
                 }
             }
         }
@@ -253,18 +301,29 @@ fn main() {
         //    The victory screen keeps the world behind it, so it reads as an
         //    overlay on the level instead of a hard cut to a different place.
         if screen != Screen::Menu {
-            let zbuffer =
-                render::render_world(&mut framebuffer, &maze, &player, &texture_manager, block_size);
+            let zbuffer = render::render_world(
+                &mut framebuffer,
+                &level.maze,
+                &player,
+                &texture_manager,
+                level.block_size,
+            );
             sprites::render_enemies(
                 &mut framebuffer,
                 &player,
-                &enemies,
+                &level.enemies,
                 &texture_manager,
                 &zbuffer,
-                block_size,
+                level.block_size,
             );
             if show_minimap && screen == Screen::Playing {
-                render::render_minimap(&mut framebuffer, &maze, &player, &enemies, block_size);
+                render::render_minimap(
+                    &mut framebuffer,
+                    &level.maze,
+                    &player,
+                    &level.enemies,
+                    level.block_size,
+                );
             }
         }
 
@@ -273,7 +332,13 @@ fn main() {
         let pad = gamepad::name(&window);
 
         framebuffer.swap_buffers(&mut window, &thread, |d| match screen {
-            Screen::Menu => draw_menu(d, menu_background.as_ref(), time, pad.as_deref()),
+            Screen::Menu => draw_menu(
+                d,
+                menu_background.as_ref(),
+                time,
+                level_choice,
+                pad.as_deref(),
+            ),
             Screen::Playing => draw_hud(d, fps, freeroam, mouse_look, pad.as_deref()),
             Screen::Victory => draw_victory(d, victory_choice, run_time, pad.as_deref()),
         });
@@ -285,6 +350,7 @@ fn draw_menu(
     d: &mut RaylibDrawHandle,
     background: Option<&Texture2D>,
     time: f32,
+    choice: usize,
     pad: Option<&str>,
 ) {
     if let Some(texture) = background {
@@ -296,22 +362,32 @@ fn draw_menu(
 
     draw_centered_text(d, TITLE, 190, 40, Color::WHITESMOKE);
 
-    // Blinking, so the eye goes to the one line that says what to do.
+    // Blinking, so the eye goes to the line that says what to do.
     let blink = (time * 3.0).sin() * 0.5 + 0.5;
     let alpha = (150.0 + 105.0 * blink) as u8;
-    let start = match pad {
-        Some(_) => "ENTER o (A) para jugar",
-        None => "ENTER para jugar",
+    draw_centered_text(
+        d,
+        "elegi un nivel",
+        255,
+        20,
+        Color::new(0xE8, 0xC0, 0x50, alpha),
+    );
+
+    let names: Vec<&str> = LEVELS.iter().map(|(name, _)| *name).collect();
+    draw_option_list(d, &names, choice, 295, 40);
+
+    let confirm = match pad {
+        Some(_) => "flechas o cruceta para elegir  |  ENTER o (A) para jugar",
+        None => "flechas para elegir  |  ENTER para jugar",
     };
-    draw_centered_text(d, start, 300, 26, Color::new(0xE8, 0xC0, 0x50, alpha));
+    draw_centered_text(d, confirm, 435, 18, Color::LIGHTGRAY);
 
     let controls = match pad {
-        Some(_) => "WASD + mouse  o  sticks del mando",
-        None => "WASD + mouse para moverse",
+        Some(_) => "WASD + mouse  o  sticks del mando  |  TAB cursor  |  M minimapa",
+        None => "WASD + mouse  |  TAB cursor  |  M minimapa",
     };
-    draw_centered_text(d, controls, 380, 18, Color::LIGHTGRAY);
-    draw_centered_text(d, "TAB libera el cursor  |  M minimapa", 404, 18, Color::GRAY);
-    draw_centered_text(d, "ESC para salir", 440, 18, Color::GRAY);
+    draw_centered_text(d, controls, 462, 16, Color::GRAY);
+    draw_centered_text(d, "ESC para salir", 486, 16, Color::GRAY);
 
     // Naming the pad is the proof it is really connected, which is the point of
     // the whole feature.
@@ -322,6 +398,76 @@ fn draw_menu(
             WINDOW_HEIGHT - 40,
             16,
             Color::new(0x8A, 0xD6, 0x9B, 255),
+        );
+    }
+}
+
+/// How many places the selection moves this frame: -1 up, 1 down, 0 still.
+///
+/// Keys have an edge of their own (`is_key_pressed`), and so does the D-pad, but
+/// the stick is an axis that stays pushed: `pad_rested` remembers whether it was
+/// centered last frame, so holding it moves one step instead of running through
+/// the list sixty times a second.
+fn menu_step(window: &RaylibHandle, pad_rested: &mut bool) -> i32 {
+    let mut step = 0;
+    if window.is_key_pressed(KeyboardKey::KEY_UP) || window.is_key_pressed(KeyboardKey::KEY_W) {
+        step -= 1;
+    }
+    if window.is_key_pressed(KeyboardKey::KEY_DOWN) || window.is_key_pressed(KeyboardKey::KEY_S) {
+        step += 1;
+    }
+
+    let pad_axis = gamepad::menu_axis(window);
+    if pad_axis != 0 && *pad_rested {
+        step += pad_axis;
+    }
+    *pad_rested = pad_axis == 0;
+
+    step
+}
+
+/// Whether the player is asking to confirm the highlighted option.
+fn confirm_pressed(window: &RaylibHandle) -> bool {
+    window.is_key_pressed(KeyboardKey::KEY_ENTER)
+        || window.is_key_pressed(KeyboardKey::KEY_SPACE)
+        || gamepad::confirm_pressed(window)
+}
+
+/// Moves `choice` by `step`, wrapping around the ends.
+fn wrap_choice(choice: usize, step: i32, count: usize) -> usize {
+    // rem_euclid so that going up from the first option lands on the last one
+    // instead of going negative.
+    (choice as i32 + step).rem_euclid(count as i32) as usize
+}
+
+/// A vertical list of options with the selected one highlighted.
+fn draw_option_list(
+    d: &mut RaylibDrawHandle,
+    options: &[&str],
+    choice: usize,
+    first_y: i32,
+    spacing: i32,
+) {
+    for (i, option) in options.iter().enumerate() {
+        let selected = i == choice;
+        // The arrow carries the selection as much as the color does: a color
+        // difference alone is easy to miss on top of a busy level.
+        let label = if selected {
+            format!("> {option} <")
+        } else {
+            option.to_string()
+        };
+        let color = if selected {
+            Color::new(0xE8, 0xC0, 0x50, 255)
+        } else {
+            Color::GRAY
+        };
+        draw_centered_text(
+            d,
+            &label,
+            first_y + i as i32 * spacing,
+            if selected { 28 } else { 24 },
+            color,
         );
     }
 }
@@ -339,23 +485,7 @@ fn draw_victory(d: &mut RaylibDrawHandle, choice: usize, run_time: f32, pad: Opt
         Color::LIGHTGRAY,
     );
 
-    for (i, option) in VICTORY_OPTIONS.iter().enumerate() {
-        let y = 300 + i as i32 * 46;
-        let selected = i == choice;
-        // The arrow carries the selection as much as the color does: a color
-        // difference alone is easy to miss on top of a busy level.
-        let label = if selected {
-            format!("> {option} <")
-        } else {
-            option.to_string()
-        };
-        let color = if selected {
-            Color::new(0xE8, 0xC0, 0x50, 255)
-        } else {
-            Color::GRAY
-        };
-        draw_centered_text(d, &label, y, if selected { 28 } else { 24 }, color);
-    }
+    draw_option_list(d, &VICTORY_OPTIONS, choice, 285, 42);
 
     let hint = match pad {
         Some(_) => "flechas o cruceta para elegir  |  ENTER o (A) para confirmar",

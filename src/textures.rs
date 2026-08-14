@@ -14,9 +14,22 @@ pub const TRANSPARENT_COLOR: Color = Color::new(152, 0, 136, 255);
 /// A character with no candidate on disk falls back to the flat colors of
 /// `render::cell_color`, so the game still runs with an empty `assets/`.
 const TEXTURE_FILES: [(char, &[&str]); 5] = [
-    ('+', &["assets/wall_corner.png", "assets/wall.png", "assets/pared.png"]),
-    ('-', &["assets/wall_h.png", "assets/wall.png", "assets/pared.png"]),
-    ('|', &["assets/wall_v.png", "assets/wall.png", "assets/pared.png"]),
+    (
+        '+',
+        &[
+            "assets/wall_corner.png",
+            "assets/wall.png",
+            "assets/pared.png",
+        ],
+    ),
+    (
+        '-',
+        &["assets/wall_h.png", "assets/wall.png", "assets/pared.png"],
+    ),
+    (
+        '|',
+        &["assets/wall_v.png", "assets/wall.png", "assets/pared.png"],
+    ),
     ('g', &["assets/goal.png", "assets/meta.png"]),
     // `enemy.png` es la versión recortada, con canal alpha. Va primero porque
     // `enemigo.png` es la conversión directa del JPG: sigue siendo opaca, y de
@@ -124,7 +137,9 @@ impl TextureManager {
 }
 
 fn is_transparent_key(color: Color) -> bool {
-    color.r == TRANSPARENT_COLOR.r && color.g == TRANSPARENT_COLOR.g && color.b == TRANSPARENT_COLOR.b
+    color.r == TRANSPARENT_COLOR.r
+        && color.g == TRANSPARENT_COLOR.g
+        && color.b == TRANSPARENT_COLOR.b
 }
 
 /// Look for a file next to the working directory first, then fall back to the

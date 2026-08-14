@@ -14,7 +14,10 @@ La vista es siempre 3D, con la vista top-down del laberinto dibujada encima como
 minimapa en la esquina superior derecha. Para exportar un frame a PNG sin jugar:
 
 ```bash
-cargo run --release -- --screenshot   # genera screenshot.png, HUD incluido
+cargo run --release -- --screenshot             # genera screenshot.png, HUD incluido
+cargo run --release -- --screenshot --menu      # la pantalla de bienvenida
+cargo run --release -- --screenshot --victory   # la pantalla de victoria
+cargo run --release -- --screenshot --level 3   # otro nivel
 ```
 
 ## Controles
@@ -62,23 +65,24 @@ chocar en diagonal se sigue avanzando sobre el eje que sí está libre.
 
 | Archivo | Contenido |
 |---------|-----------|
-| `maze.txt` | el laberinto: `+ - \|` paredes, ` ` piso, `p` spawn, `g` meta, `e` enemigo |
-| `assets/` | las texturas (PNG); los nombres esperados están en `assets/README.md` |
+| `maze.txt`, `maze2.txt`, `maze3.txt` | los tres niveles: `+ - \|` paredes, ` ` piso, `p` spawn, `g` meta, `e` enemigo |
+| `assets/` | las texturas y el fondo del menú (PNG) |
 | `src/maze.rs` | tipo `Maze` (grid de chars + dimensiones), carga del archivo, `is_wall`, búsqueda de `p`/`g`/`e` |
-| `src/player.rs` | `Player { pos, a, fov }` y `process_events` (input + colisión) |
+| `src/player.rs` | `Player { pos, a, fov }`, el `Intent` de entrada y `apply_intent` (movimiento + colisión) |
 | `src/caster.rs` | `Intersect { distance, impact, tx, side }` y `cast_ray` |
 | `src/textures.rs` | `TextureManager`: mantiene las imágenes en memoria y devuelve pixeles sueltos |
 | `src/render.rs` | `render_world` (3D con stakes texturizadas, devuelve el z-buffer) y `render_minimap` |
 | `src/sprites.rs` | `Enemy` y `render_enemies` (billboarding + z-buffer) |
 | `src/framebuffer.rs` | buffer de pixeles en CPU, se sube a la GPU una vez por frame |
-| `src/main.rs` | ventana, main loop, HUD |
+| `src/gamepad.rs` | lectura del mando: sticks con zona muerta, cruceta y botones |
+| `src/main.rs` | ventana, main loop, máquina de pantallas, HUD y menús |
 
 Origen del framebuffer: **arriba-izquierda**, x a la derecha y y hacia abajo, para
 que la fila 0 de `maze.txt` sea la fila de arriba en pantalla. Por eso el ángulo
 `a` crece en sentido de las agujas del reloj.
 
-`block_size` (el tamaño de una celda en pixeles del mundo) se calcula al arrancar:
-24 px con este mapa de 33×11.
+`block_size` (el tamaño de una celda en pixeles del mundo) se calcula al cargar cada
+nivel: 24 px en el mapa de 33×11, 16 en el de 49×15 y 12 en el de 65×19.
 
 ## El minimapa
 
@@ -132,9 +136,24 @@ stake_height                 = (block_size / distance_to_wall) * distance_to_pro
 
 ## Pantallas
 
-`Screen { Menu, Playing, Victory }` en `main.rs`. El juego abre en la bienvenida, `ENTER`
-(o `SPACE`, o **A** en el mando) entra al laberinto, y llegar a la `g` abre la pantalla de
-victoria. Falta el estado de selección de nivel.
+`Screen { Menu, Playing, Victory }` en `main.rs`. El juego abre en la bienvenida, que es
+también el **selector de nivel**: se elige con las flechas (o la cruceta) entre los tres
+laberintos y `ENTER` (o **A**) empieza. Llegar a la `g` abre la pantalla de victoria.
+
+Los niveles viven en `LEVELS`, de más fácil a más difícil:
+
+| Nivel | Archivo | Tamaño | Enemigos |
+|-------|---------|--------|----------|
+| 1 - Facil | `maze.txt` | 33×11 | 3 |
+| 2 - Normal | `maze2.txt` | 49×15 | 6 |
+| 3 - Dificil | `maze3.txt` | 65×19 | 9 |
+
+Todo lo que cambia entre niveles vive en un `Level { maze, block_size, spawn, goal,
+enemies }`, y `load_level` lo arma leyendo el archivo. Cambiar de nivel es construir otro:
+nada del juego se queda con el laberinto viejo. El `block_size` sale de
+`min(ancho_ventana / columnas, alto_ventana / filas)`, así que los mapas grandes usan
+celdas más chicas y entran en la misma ventana — y de paso el costo del raycast no se
+dispara, porque el mundo mide más o menos lo mismo en píxeles en los tres.
 
 En `Menu` no se llama a `process_events` ni se chequea la meta: si se llamara, el jugador
 se movería detrás del menú y podría ganar sin haber jugado. El cursor también depende del
@@ -148,13 +167,17 @@ Elegir "seguir explorando" prende `freeroam`, que **desactiva la meta**. Sin eso
 pisar la `g` tiraría la pantalla de victoria de nuevo a la cara. El HUD lo dice en pantalla,
 porque si no parece que la meta se rompió.
 
-La selección se mueve con flechas (una tecla, un paso) y con la cruceta o el stick del
-mando. El stick necesita un *latch*: es un eje que se queda empujado, así que sin recordar
-si estaba en reposo el frame anterior, mantenerlo recorrería las opciones sesenta veces por
-segundo. La flecha `> opción <` marca la selección además del color, que sobre un nivel
-lleno de textura es fácil de no ver.
+Desde la victoria también se puede volver al menú a elegir otro nivel.
 
-Para revisar las pantallas sin jugar: `--screenshot --menu` y `--screenshot --victory`.
+Las dos pantallas con opciones comparten `menu_step` y `draw_option_list`. La selección se
+mueve con flechas (una tecla, un paso) y con la cruceta o el stick del mando. El stick
+necesita un *latch*: es un eje que se queda empujado, así que sin recordar si estaba en
+reposo el frame anterior, mantenerlo recorrería las opciones sesenta veces por segundo. La
+flecha `> opción <` marca la selección además del color, que sobre un nivel lleno de
+textura es fácil de no ver.
+
+Para revisar las pantallas sin jugar: `--screenshot --menu`, `--screenshot --victory` y
+`--screenshot --level 3`.
 
 El fondo sale de `MENU_BACKGROUNDS`, con la misma lógica de candidatos que las texturas de
 pared: gana el primero que cargue, hoy `assets/menu.png` y si no `assets/pared.png` como

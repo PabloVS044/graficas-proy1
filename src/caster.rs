@@ -46,7 +46,9 @@ pub fn cast_ray(
     let cos_a = a.cos();
     let sin_a = a.sin();
 
-    let max_distance = maze.world_width(block_size).hypot(maze.world_height(block_size));
+    let max_distance = maze
+        .world_width(block_size)
+        .hypot(maze.world_height(block_size));
 
     loop {
         let x = player.pos.x + d * cos_a;

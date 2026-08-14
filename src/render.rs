@@ -140,7 +140,12 @@ pub fn render_world(
     framebuffer.set_current_color(Color::new(0x1B, 0x1E, 0x2B, 255));
     framebuffer.rect(0, 0, framebuffer.width, hh as i32);
     framebuffer.set_current_color(Color::new(0x2E, 0x24, 0x24, 255));
-    framebuffer.rect(0, hh as i32, framebuffer.width, framebuffer.height - hh as i32);
+    framebuffer.rect(
+        0,
+        hh as i32,
+        framebuffer.width,
+        framebuffer.height - hh as i32,
+    );
 
     for i in 0..num_rays {
         let current_ray = i as f32 / num_rays as f32; // current ray divided by total rays

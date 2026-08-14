@@ -35,8 +35,10 @@ pub fn intent(window: &RaylibHandle) -> Intent {
 
     // Sticks. The Y axis points down (up on the stick is negative), so forward
     // is the negated value.
-    let mut forward = -deadzone(window.get_gamepad_axis_movement(PAD, GamepadAxis::GAMEPAD_AXIS_LEFT_Y));
-    let mut strafe = deadzone(window.get_gamepad_axis_movement(PAD, GamepadAxis::GAMEPAD_AXIS_LEFT_X));
+    let mut forward =
+        -deadzone(window.get_gamepad_axis_movement(PAD, GamepadAxis::GAMEPAD_AXIS_LEFT_Y));
+    let mut strafe =
+        deadzone(window.get_gamepad_axis_movement(PAD, GamepadAxis::GAMEPAD_AXIS_LEFT_X));
     let turn = deadzone(window.get_gamepad_axis_movement(PAD, GamepadAxis::GAMEPAD_AXIS_RIGHT_X));
 
     // D-pad, all or nothing, on the same axes as the left stick.
