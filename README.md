@@ -54,9 +54,9 @@ Centrar al capturar (`capture_cursor`) tampoco es cosmético: como el movimiento
 contra el centro, arrancar o volver de `TAB` con el puntero en otro lado se leería como un
 movimiento gigante y la cámara pegaría un salto.
 
-El jugador arranca en la celda `p` y gana al llegar a la `g` (aparece `GANASTE!`
-en pantalla). Hay colisión con paredes, con deslizamiento: al chocar en diagonal
-se sigue avanzando sobre el eje que sí está libre.
+El jugador arranca en la celda `p` y gana al llegar a la `g`, que abre la pantalla de
+victoria con el tiempo de la partida. Hay colisión con paredes, con deslizamiento: al
+chocar en diagonal se sigue avanzando sobre el eje que sí está libre.
 
 ## Estructura
 
@@ -132,12 +132,29 @@ stake_height                 = (block_size / distance_to_wall) * distance_to_pro
 
 ## Pantallas
 
-`Screen { Menu, Playing }` en `main.rs`. El juego abre en la bienvenida y `ENTER` (o
-`SPACE`) entra al laberinto. Faltan los estados de selección de nivel y de éxito.
+`Screen { Menu, Playing, Victory }` en `main.rs`. El juego abre en la bienvenida, `ENTER`
+(o `SPACE`, o **A** en el mando) entra al laberinto, y llegar a la `g` abre la pantalla de
+victoria. Falta el estado de selección de nivel.
 
 En `Menu` no se llama a `process_events` ni se chequea la meta: si se llamara, el jugador
 se movería detrás del menú y podría ganar sin haber jugado. El cursor también depende del
-estado — libre en la bienvenida, capturado al empezar.
+estado — libre en la bienvenida y en la victoria, capturado mientras se juega.
+
+La pantalla de victoria muestra el tiempo de la partida y deja elegir entre **seguir
+explorando** o **reiniciar**. El nivel se sigue renderizando detrás, con un velo encima:
+así se lee como una capa sobre el laberinto y no como un corte a otro lugar.
+
+Elegir "seguir explorando" prende `freeroam`, que **desactiva la meta**. Sin eso, volver a
+pisar la `g` tiraría la pantalla de victoria de nuevo a la cara. El HUD lo dice en pantalla,
+porque si no parece que la meta se rompió.
+
+La selección se mueve con flechas (una tecla, un paso) y con la cruceta o el stick del
+mando. El stick necesita un *latch*: es un eje que se queda empujado, así que sin recordar
+si estaba en reposo el frame anterior, mantenerlo recorrería las opciones sesenta veces por
+segundo. La flecha `> opción <` marca la selección además del color, que sobre un nivel
+lleno de textura es fácil de no ver.
+
+Para revisar las pantallas sin jugar: `--screenshot --menu` y `--screenshot --victory`.
 
 El fondo sale de `MENU_BACKGROUNDS`, con la misma lógica de candidatos que las texturas de
 pared: gana el primero que cargue, hoy `assets/menu.png` y si no `assets/pared.png` como
@@ -156,7 +173,6 @@ limpio, así que renderizar un frame que nadie va a ver sería trabajo tirado.
 se descuadra apenas cambia el texto) y dibuja una sombra debajo, por lo mismo que el
 crosshair tiene contorno: texto plano sobre una foto desaparece en las zonas claras.
 
-Para revisar el menú sin abrir el juego: `cargo run --release -- --screenshot --menu`.
 
 ## El mando
 

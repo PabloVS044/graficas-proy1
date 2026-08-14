@@ -30,12 +30,18 @@ const TITLE: &str = "PROYECTO 1 - RAYCASTER";
 /// `menu.png`.
 const MENU_BACKGROUNDS: [&str; 2] = ["assets/menu.png", "assets/pared.png"];
 
-/// Which screen the game is on. The level selector and the success screen are
-/// the two states still missing here.
+/// Which screen the game is on. The level selector is the one still missing.
+#[derive(PartialEq)]
 enum Screen {
     Menu,
     Playing,
+    Victory,
 }
+
+/// The two things offered after winning.
+const VICTORY_OPTIONS: [&str; 2] = ["Seguir explorando", "Reiniciar el nivel"];
+const OPTION_FREEROAM: usize = 0;
+const OPTION_RESTART: usize = 1;
 
 fn main() {
     let maze = Maze::load(asset_path("maze.txt").to_str().unwrap());
@@ -76,7 +82,17 @@ fn main() {
 
     let mut framebuffer = Framebuffer::new(WINDOW_WIDTH, WINDOW_HEIGHT, Color::BLACK);
     let mut show_minimap = true;
-    let mut won = false;
+
+    // After winning, the player can keep walking around the level. The goal stops
+    // triggering then, or reaching it again would throw the victory screen back
+    // in their face.
+    let mut freeroam = false;
+    let mut run_started = 0.0;
+    let mut run_time = 0.0;
+    let mut victory_choice = OPTION_FREEROAM;
+    // Whether the pad's menu axis was resting last frame, so holding the stick
+    // moves the selection once instead of every frame.
+    let mut pad_menu_rested = true;
 
     // Background for the title screen. It is a plain GPU texture, not a
     // `TextureManager` entry: that one keeps pixels on the CPU to sample them one
@@ -94,9 +110,11 @@ fn main() {
 
     // `cargo run -- --screenshot` draws one full frame, saves the window to disk
     // and exits, which is handy for checking the render without playing.
-    // `--screenshot --menu` does the same for the title screen.
+    // `--menu` and `--victory` do the same for the other two screens, which
+    // otherwise can only be seen by playing.
     if std::env::args().any(|arg| arg == "--screenshot") {
         let menu_shot = std::env::args().any(|arg| arg == "--menu");
+        let victory_shot = std::env::args().any(|arg| arg == "--victory");
         let pad_name = gamepad::name(&window);
         framebuffer.clear();
         let zbuffer =
@@ -109,12 +127,14 @@ fn main() {
             &zbuffer,
             block_size,
         );
-        if !menu_shot {
+        if !menu_shot && !victory_shot {
             render::render_minimap(&mut framebuffer, &maze, &player, &enemies, block_size);
         }
         framebuffer.swap_buffers(&mut window, &thread, |d| {
             if menu_shot {
                 draw_menu(d, menu_background.as_ref(), 0.0, pad_name.as_deref());
+            } else if victory_shot {
+                draw_victory(d, OPTION_FREEROAM, 42.7, pad_name.as_deref());
             } else {
                 draw_hud(d, 0, false, true, pad_name.as_deref());
             }
@@ -139,6 +159,7 @@ fn main() {
                     screen = Screen::Playing;
                     capture_cursor(&mut window);
                     mouse_look = true;
+                    run_started = window.get_time();
                 }
             }
             Screen::Playing => {
@@ -167,9 +188,57 @@ fn main() {
                 player::apply_intent(&mut player, intent, &maze, block_size, dt);
 
                 if let Some((gi, gj)) = goal {
-                    if maze.cell_at_pixel(player.pos, block_size) == (gi, gj) {
-                        won = true;
+                    if !freeroam && maze.cell_at_pixel(player.pos, block_size) == (gi, gj) {
+                        screen = Screen::Victory;
+                        run_time = (window.get_time() - run_started) as f32;
+                        victory_choice = OPTION_FREEROAM;
+                        release_cursor(&mut window);
                     }
+                }
+            }
+            Screen::Victory => {
+                // Move the selection: one step per key press, and one step per
+                // *new* push of the pad (hence the latch).
+                let pad_axis = gamepad::menu_axis(&window);
+                let mut step = 0;
+                if window.is_key_pressed(KeyboardKey::KEY_UP)
+                    || window.is_key_pressed(KeyboardKey::KEY_W)
+                {
+                    step -= 1;
+                }
+                if window.is_key_pressed(KeyboardKey::KEY_DOWN)
+                    || window.is_key_pressed(KeyboardKey::KEY_S)
+                {
+                    step += 1;
+                }
+                if pad_axis != 0 && pad_menu_rested {
+                    step += pad_axis;
+                }
+                pad_menu_rested = pad_axis == 0;
+
+                if step != 0 {
+                    // rem_euclid so that going up from the first option wraps to
+                    // the last one instead of going negative.
+                    let count = VICTORY_OPTIONS.len() as i32;
+                    victory_choice = (victory_choice as i32 + step).rem_euclid(count) as usize;
+                }
+
+                if window.is_key_pressed(KeyboardKey::KEY_ENTER)
+                    || window.is_key_pressed(KeyboardKey::KEY_SPACE)
+                    || gamepad::confirm_pressed(&window)
+                {
+                    if victory_choice == OPTION_RESTART {
+                        player = Player::new(spawn);
+                        freeroam = false;
+                        run_started = window.get_time();
+                    } else {
+                        // Free roam: the level stays as it is and the goal stops
+                        // counting, so walking over it again changes nothing.
+                        freeroam = true;
+                    }
+                    screen = Screen::Playing;
+                    capture_cursor(&mut window);
+                    mouse_look = true;
                 }
             }
         }
@@ -181,7 +250,9 @@ fn main() {
         //    sprites depth-tested against it, and the minimap on top of both.
         //    The menu draws none of it: it is a full screen image over a cleared
         //    buffer, so raycasting a frame nobody sees would be wasted work.
-        if matches!(screen, Screen::Playing) {
+        //    The victory screen keeps the world behind it, so it reads as an
+        //    overlay on the level instead of a hard cut to a different place.
+        if screen != Screen::Menu {
             let zbuffer =
                 render::render_world(&mut framebuffer, &maze, &player, &texture_manager, block_size);
             sprites::render_enemies(
@@ -192,7 +263,7 @@ fn main() {
                 &zbuffer,
                 block_size,
             );
-            if show_minimap {
+            if show_minimap && screen == Screen::Playing {
                 render::render_minimap(&mut framebuffer, &maze, &player, &enemies, block_size);
             }
         }
@@ -203,7 +274,8 @@ fn main() {
 
         framebuffer.swap_buffers(&mut window, &thread, |d| match screen {
             Screen::Menu => draw_menu(d, menu_background.as_ref(), time, pad.as_deref()),
-            Screen::Playing => draw_hud(d, fps, won, mouse_look, pad.as_deref()),
+            Screen::Playing => draw_hud(d, fps, freeroam, mouse_look, pad.as_deref()),
+            Screen::Victory => draw_victory(d, victory_choice, run_time, pad.as_deref()),
         });
     }
 }
@@ -252,6 +324,45 @@ fn draw_menu(
             Color::new(0x8A, 0xD6, 0x9B, 255),
         );
     }
+}
+
+/// The success screen, drawn over the frozen level.
+fn draw_victory(d: &mut RaylibDrawHandle, choice: usize, run_time: f32, pad: Option<&str>) {
+    d.draw_rectangle(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, Color::new(0, 0, 0, 160));
+
+    draw_centered_text(d, "GANASTE!", 140, 56, Color::new(0x5E, 0xD9, 0x8A, 255));
+    draw_centered_text(
+        d,
+        &format!("llegaste a la meta en {run_time:.1} s"),
+        215,
+        20,
+        Color::LIGHTGRAY,
+    );
+
+    for (i, option) in VICTORY_OPTIONS.iter().enumerate() {
+        let y = 300 + i as i32 * 46;
+        let selected = i == choice;
+        // The arrow carries the selection as much as the color does: a color
+        // difference alone is easy to miss on top of a busy level.
+        let label = if selected {
+            format!("> {option} <")
+        } else {
+            option.to_string()
+        };
+        let color = if selected {
+            Color::new(0xE8, 0xC0, 0x50, 255)
+        } else {
+            Color::GRAY
+        };
+        draw_centered_text(d, &label, y, if selected { 28 } else { 24 }, color);
+    }
+
+    let hint = match pad {
+        Some(_) => "flechas o cruceta para elegir  |  ENTER o (A) para confirmar",
+        None => "flechas para elegir  |  ENTER para confirmar",
+    };
+    draw_centered_text(d, hint, 440, 18, Color::LIGHTGRAY);
+    draw_centered_text(d, "ESC para salir", 470, 18, Color::GRAY);
 }
 
 /// Draws `texture` filling the window without deforming it: the overflowing side
@@ -344,7 +455,7 @@ fn read_mouse_look(window: &mut RaylibHandle, mouse_look: bool) -> f32 {
 fn draw_hud(
     d: &mut RaylibDrawHandle,
     fps: u32,
-    won: bool,
+    freeroam: bool,
     mouse_look: bool,
     pad: Option<&str>,
 ) {
@@ -374,13 +485,15 @@ fn draw_hud(
 
     draw_crosshair(d);
 
-    if won {
+    // After winning, the goal no longer does anything: saying so avoids looking
+    // like the victory screen is broken when walking over it again.
+    if freeroam {
         d.draw_text(
-            "GANASTE!",
-            WINDOW_WIDTH / 2 - 90,
-            WINDOW_HEIGHT / 2 - 20,
-            40,
-            Color::LIME,
+            "modo libre - nivel completado",
+            10,
+            WINDOW_HEIGHT - 28,
+            18,
+            Color::new(0x5E, 0xD9, 0x8A, 255),
         );
     }
 }

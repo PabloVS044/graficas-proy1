@@ -61,6 +61,32 @@ pub fn intent(window: &RaylibHandle) -> Intent {
     }
 }
 
+/// Where the pad is pointing on a menu this frame: -1 up, 1 down, 0 centered.
+///
+/// The D-pad is read as a press (it has an edge), but the stick is an axis that
+/// stays held: turning it into steps is the caller's job, comparing against the
+/// previous frame. Otherwise holding the stick would run through the options
+/// sixty times a second.
+pub fn menu_axis(window: &RaylibHandle) -> i32 {
+    if !window.is_gamepad_available(PAD) {
+        return 0;
+    }
+
+    if window.is_gamepad_button_down(PAD, GamepadButton::GAMEPAD_BUTTON_LEFT_FACE_UP) {
+        return -1;
+    }
+    if window.is_gamepad_button_down(PAD, GamepadButton::GAMEPAD_BUTTON_LEFT_FACE_DOWN) {
+        return 1;
+    }
+
+    let stick = deadzone(window.get_gamepad_axis_movement(PAD, GamepadAxis::GAMEPAD_AXIS_LEFT_Y));
+    if stick.abs() < 0.5 {
+        0
+    } else {
+        stick.signum() as i32
+    }
+}
+
 /// A or Start: what confirms on the title screen.
 pub fn confirm_pressed(window: &RaylibHandle) -> bool {
     window.is_gamepad_available(PAD)
