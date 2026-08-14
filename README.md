@@ -66,7 +66,7 @@ chocar en diagonal se sigue avanzando sobre el eje que sí está libre.
 | Archivo | Contenido |
 |---------|-----------|
 | `maze.txt`, `maze2.txt`, `maze3.txt` | los tres niveles: `+ - \|` paredes, ` ` piso, `p` spawn, `g` meta, `e` enemigo |
-| `assets/` | las texturas y el fondo del menú (PNG) |
+| `assets/` | texturas y fondo del menú (PNG), y los sonidos (OGG) |
 | `src/maze.rs` | tipo `Maze` (grid de chars + dimensiones), carga del archivo, `is_wall`, búsqueda de `p`/`g`/`e` |
 | `src/player.rs` | `Player { pos, a, fov }`, el `Intent` de entrada y `apply_intent` (movimiento + colisión) |
 | `src/caster.rs` | `Intersect { distance, impact, tx, side }` y `cast_ray` |
@@ -224,6 +224,45 @@ verdad.
 GLFW (el que usa este build) es un no-op que solo logea `"not available on target
 platform"`. Tenerla implicaría hablarle a `/dev/input/eventX` por force-feedback, saltando
 raylib.
+
+## El audio
+
+`RaylibAudio` y los clips viven sueltos en `main` y no en un struct propio: un `Music`
+toma prestado el device del que salió, así que juntarlos en un tipo lo volvería
+autorreferencial, que en Rust es pelearse con el borrow checker sin ganar nada.
+
+Los pasos son un **loop que se pausa**, no un sample por pisada. El clip de Calamardo es
+rítmico —cuatro golpes con su propia cadencia—, y recortarlo en pisadas sueltas mataría
+justamente lo que lo hace reconocible. Entonces: si el jugador se mueve, `resume_stream`;
+si se detiene, `pause_stream`. `resume` y no `play`, porque `play` reinicia desde el
+principio y caminar a tirones repetiría el primer golpe cada vez.
+
+Lo que decide si "se está moviendo" es la **distancia real recorrida** entre frames
+(`player.pos` antes y después), no lo que pidió el input. Empujar contra una pared tiene
+intención de movimiento pero no mueve nada, y ahí los pasos tienen que callarse.
+
+El clip original traía 200 ms de silencio al principio, que en loop se escucha como un
+hipo en cada vuelta. `assets/pasos.ogg` es el original recortado desde el primer golpe y
+rellenado al final hasta 1.708 s, que son exactamente 4 × 427 ms: así el salto del final al
+principio mantiene la cadencia en vez de tropezar.
+
+`update_stream()` corre todos los frames aunque esté pausado: un sonido en streaming hay
+que alimentarlo o se queda sin buffer.
+
+## Los sprites y el piso
+
+El enemigo se dibuja al **55% de la altura de un bloque** a la misma distancia
+(`SPRITE_SCALE` en `src/sprites.rs`), no del tamaño de la pared.
+
+Va **centrado en el horizonte**, que es la altura de los ojos del jugador: son enemigos
+voladores, así que flotan en vez de apoyarse. Un sprite que caminara por el piso tendría
+que anclarse a la base del bloque (`hh + block_height / 2`) y colgar hacia arriba desde
+ahí; centrado, cualquier cosa más chica que un bloque queda flotando — que acá es
+justamente lo que se busca.
+
+El sprite se dibuja con su fondo, como un cuadro colgado; es una decisión y no un olvido.
+Si en algún momento se quiere recortado, alcanza con dejar un `assets/enemy.png` con canal
+alpha: va primero en la lista de candidatos.
 
 ## La cámara y el tiempo
 

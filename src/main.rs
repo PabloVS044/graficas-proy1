@@ -30,6 +30,15 @@ const TITLE: &str = "PROYECTO 1 - RAYCASTER";
 /// `menu.png`.
 const MENU_BACKGROUNDS: [&str; 2] = ["assets/menu.png", "assets/pared.png"];
 
+/// Looping footsteps, played while the player is actually moving.
+const STEPS_SOUND: &str = "assets/pasos.ogg";
+const STEPS_VOLUME: f32 = 0.7;
+
+/// Distance in pixels the player has to cover in one frame for the footsteps to
+/// count as walking. It is measured on the *real* position, so pushing against a
+/// wall (where the intent is there but nothing moves) stays silent.
+const WALKING_EPSILON: f32 = 0.05;
+
 /// Which screen the game is on.
 #[derive(PartialEq)]
 enum Screen {
@@ -201,12 +210,42 @@ fn main() {
         return;
     }
 
+    // Audio. Both the device and the clips live here in `main` instead of in a
+    // struct of their own: a `Music` borrows the device it came from, so keeping
+    // the two together in one type would make it self-referential.
+    let audio = RaylibAudio::init_audio_device().ok();
+    if audio.is_none() {
+        eprintln!("aviso: no se pudo abrir el audio; el juego corre en silencio");
+    }
+    let steps = audio.as_ref().and_then(|device| {
+        let path = asset_path(STEPS_SOUND);
+        match device.new_music(path.to_str().unwrap_or(STEPS_SOUND)) {
+            Ok(mut music) => {
+                music.set_looping(true);
+                music.set_volume(STEPS_VOLUME);
+                Some(music)
+            }
+            Err(e) => {
+                eprintln!("aviso: no se pudo cargar '{STEPS_SOUND}' ({e}); sin pasos");
+                None
+            }
+        }
+    });
+    // `play` restarts from the beginning while `resume` continues, so walking in
+    // bursts needs to know whether the clip was ever started.
+    let mut steps_started = false;
+    let mut steps_playing = false;
+
     // The title screen owns the cursor: it is only captured once the game starts.
     let mut screen = Screen::Menu;
     let mut mouse_look = true;
 
     while !window.window_should_close() {
         let dt = window.get_frame_time().min(MAX_FRAME_TIME);
+
+        // Only true while the player is really moving through the level, so the
+        // footsteps stop on the menus and against walls.
+        let mut walking = false;
 
         match screen {
             Screen::Menu => {
@@ -250,7 +289,9 @@ fn main() {
                 let mouse_dx = read_mouse_look(&mut window, mouse_look);
                 let intent =
                     player::keyboard_intent(&window, mouse_dx).merge(gamepad::intent(&window));
+                let was_at = player.pos;
                 player::apply_intent(&mut player, intent, &level.maze, level.block_size, dt);
+                walking = player.pos.distance(was_at) > WALKING_EPSILON;
 
                 let on_goal =
                     level.goal == Some(level.maze.cell_at_pixel(player.pos, level.block_size));
@@ -291,10 +332,31 @@ fn main() {
             }
         }
 
-        // 3. clear framebuffer
+        // 3. keep the footsteps in sync with the feet
+        if let Some(music) = &steps {
+            // A streamed sound has to be fed every frame or it runs dry.
+            music.update_stream();
+
+            if walking && !steps_playing {
+                if steps_started {
+                    // Continue where it left off: restarting would replay the
+                    // first tap every time the player taps the key.
+                    music.resume_stream();
+                } else {
+                    music.play_stream();
+                    steps_started = true;
+                }
+                steps_playing = true;
+            } else if !walking && steps_playing {
+                music.pause_stream();
+                steps_playing = false;
+            }
+        }
+
+        // 4. clear framebuffer
         framebuffer.clear();
 
-        // 4. draw stuff: the 3D world first (which fills the z-buffer), then the
+        // 5. draw stuff: the 3D world first (which fills the z-buffer), then the
         //    sprites depth-tested against it, and the minimap on top of both.
         //    The menu draws none of it: it is a full screen image over a cleared
         //    buffer, so raycasting a frame nobody sees would be wasted work.

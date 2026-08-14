@@ -20,6 +20,11 @@ const NEAR_CLIP: f32 = 4.0;
 /// entering from the side slides in instead of popping into existence.
 const FOV_MARGIN: f32 = 0.4;
 
+/// Size of a sprite as a fraction of a wall block at the same distance. Below 1
+/// the enemy is smaller than the corridor is tall, which is what makes it read
+/// as something standing *in* the level instead of another wall.
+const SPRITE_SCALE: f32 = 0.55;
+
 /// Draws every enemy over the already rendered world.
 ///
 /// `zbuffer` holds the perpendicular distance to the wall on each column, which
@@ -68,10 +73,15 @@ pub fn render_enemies(
         // 4/5. Size and horizontal position on screen. Both come from the same
         //      projection plane the walls use, so the sprite sits exactly on the
         //      column of wall it is standing in front of.
-        let sprite_size = (block_size as f32 / distance) * distance_to_projection_plane;
+        // How tall a wall block is at this distance: the same projection the
+        // stakes use, so the sprite shares their sense of scale.
+        let block_height = (block_size as f32 / distance) * distance_to_projection_plane;
+        let sprite_size = block_height * SPRITE_SCALE;
         let screen_x = hw + diff.tan() * distance_to_projection_plane;
 
         let start_x = screen_x - sprite_size / 2.0;
+        // Centered on the horizon, which is exactly eye level: these enemies
+        // float rather than stand, so they are not anchored to the floor.
         let start_y = hh - sprite_size / 2.0;
 
         let Some((tex_width, tex_height)) = texture_manager.size(enemy.kind) else {
