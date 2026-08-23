@@ -6,30 +6,16 @@ use crate::player::Player;
 use crate::render::{shade, shade_factor};
 use crate::textures::TextureManager;
 
-/// A billboard standing in the maze: a flat image that always faces the player
-/// and scales with distance. `kind` is the char that picks its texture.
 pub struct Enemy {
     pub pos: Vector2,
     pub kind: char,
 }
 
-/// Sprites this close to the camera are skipped: the projected size explodes and
-/// the player is standing inside them anyway.
 const NEAR_CLIP: f32 = 4.0;
-/// Extra angle beyond half the FOV that still counts as visible, so a sprite
-/// entering from the side slides in instead of popping into existence.
 const FOV_MARGIN: f32 = 0.4;
 
-/// Size of a sprite as a fraction of a wall block at the same distance. Below 1
-/// the enemy is smaller than the corridor is tall, which is what makes it read
-/// as something standing *in* the level instead of another wall.
 const SPRITE_SCALE: f32 = 0.55;
 
-/// Draws every enemy over the already rendered world.
-///
-/// `zbuffer` holds the perpendicular distance to the wall on each column, which
-/// is what decides per pixel whether the sprite is in front of the wall or
-/// hidden behind it.
 pub fn render_enemies(
     framebuffer: &mut Framebuffer,
     player: &Player,
@@ -42,7 +28,6 @@ pub fn render_enemies(
     let hh = framebuffer.height as f32 / 2.0;
     let distance_to_projection_plane = hw / (player.fov / 2.0).tan();
 
-    // Far to near, so a closer sprite paints over the one behind it.
     let mut order: Vec<(usize, f32)> = enemies
         .iter()
         .enumerate()
@@ -57,40 +42,25 @@ pub fn render_enemies(
             continue;
         }
 
-        // 1. Angle from the player to the sprite. atan2 keeps the quadrant that
-        //    a plain atan(y/x) would throw away.
         let sprite_a = (enemy.pos.y - player.pos.y).atan2(enemy.pos.x - player.pos.x);
 
-        // 2. Angular difference normalized to [-PI, PI], so a sprite straddling
-        //    the 0/2PI wrap doesn't look like it is 359 degrees away.
         let diff = (sprite_a - player.a + PI).rem_euclid(2.0 * PI) - PI;
 
-        // 3. Outside the field of view: nothing to draw.
         if diff.abs() > player.fov / 2.0 + FOV_MARGIN {
             continue;
         }
 
-        // 4/5. Size and horizontal position on screen. Both come from the same
-        //      projection plane the walls use, so the sprite sits exactly on the
-        //      column of wall it is standing in front of.
-        // How tall a wall block is at this distance: the same projection the
-        // stakes use, so the sprite shares their sense of scale.
         let block_height = (block_size as f32 / distance) * distance_to_projection_plane;
         let sprite_size = block_height * SPRITE_SCALE;
         let screen_x = hw + diff.tan() * distance_to_projection_plane;
 
         let start_x = screen_x - sprite_size / 2.0;
-        // Centered on the horizon, which is exactly eye level: these enemies
-        // float rather than stand, so they are not anchored to the floor.
         let start_y = hh - sprite_size / 2.0;
 
         let Some((tex_width, tex_height)) = texture_manager.size(enemy.kind) else {
             continue;
         };
 
-        // Signed clamping: a sprite entering from the left has a negative
-        // start_x, and the texture coordinate still has to be measured from
-        // there, not from the first visible column.
         let first_x = (start_x.floor() as i32).max(0);
         let last_x = ((start_x + sprite_size).ceil() as i32).min(framebuffer.width);
         let first_y = (start_y.floor() as i32).max(0);
@@ -99,7 +69,6 @@ pub fn render_enemies(
         let factor = shade_factor(distance);
 
         for x in first_x..last_x {
-            // 6. Depth test: a wall closer than the sprite hides this column.
             if zbuffer[x as usize] < distance {
                 continue;
             }
@@ -109,8 +78,7 @@ pub fn render_enemies(
             for y in first_y..last_y {
                 let ty = ((y as f32 - start_y) / sprite_size * tex_height as f32) as u32;
 
-                // `None` is a transparent pixel (alpha or magenta key): the wall
-                // behind the sprite stays visible there.
+
                 if let Some(color) = texture_manager.get_pixel(enemy.kind, tx, ty) {
                     framebuffer.set_pixel_color(x, y, shade(color, factor));
                 }

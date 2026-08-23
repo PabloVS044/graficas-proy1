@@ -249,6 +249,17 @@ principio mantiene la cadencia en vez de tropezar.
 `update_stream()` corre todos los frames aunque esté pausado: un sonido en streaming hay
 que alimentarlo o se queda sin buffer.
 
+## El piso y el cielo
+
+Las dos bandas planas no llevan colores inventados: están **muestreados de las propias
+texturas** — la mediana del agua abierta en `pared3.png` da el techo (`#3E9EAA`) y la
+mediana de la arena en la base de `pared.png` da el piso (`#BFB693`). Así las bandas
+continúan el arte en lugar de aproximarlo.
+
+Se probó también una versión más apagada, pensando que un piso claro le comería
+protagonismo a las paredes; el resultado fue peor: la arena desaturada se lee como barro
+gris y rompe justo lo que se buscaba.
+
 ## Los sprites y el piso
 
 El enemigo se dibuja al **55% de la altura de un bloque** a la misma distancia
