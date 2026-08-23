@@ -296,12 +296,19 @@ pixeles ya convertidos a RGBA en un `Vec<u8>`. Convertir una sola vez al cargar 
 de leer `image.data` crudo en cada muestra, como el snippet de la diapositiva) deja el
 camino por pixel sin `unsafe` y sin depender del formato del archivo.
 
-Cada char tiene una lista de candidatos en `TEXTURE_FILES` y gana el primero que exista:
-`+`, `-` y `|` son solo tipos de celda del archivo, en pantalla los tres son el mismo
-bloque, así que un único `assets/wall.png` textura las tres paredes y un archivo
-específico (`wall_v.png`, etc.) lo pisa solo para ese char. Los chars apuntan a un índice
-en un `Vec<Texture>`, así una imagen compartida se carga y se guarda una sola vez y la
-búsqueda por pixel sigue siendo un solo hash sobre un `char`.
+Cada char tiene una lista de candidatos en `TEXTURE_FILES` y gana el primero que exista,
+así que cambiar una textura es pegar un archivo. Hoy los tres tipos de pared tienen imagen
+propia: `+` una placa de metal, `-` la esponja amarilla y `|` metal con ventanas. Los chars
+apuntan a un índice en un `Vec<Texture>`, así que si dos compartieran archivo se cargaría
+una sola vez, y la búsqueda por pixel sigue siendo un solo hash sobre un `char`.
+
+Las imágenes originales son panorámicas (3168×1344) y **generadas con IA, con las franjas
+superior e inferior desenfocadas**. Se recortaron a la banda nítida —detectada midiendo el
+gradiente horizontal fila por fila, que el desenfoque aplasta— y de ahí a un cuadrado de
+512×512. El recorte cuadrado no es capricho: el renderer estira la imagen entera sobre cada
+cara de bloque, así que una panorámica de 3168 px se vería como toda la escena aplastada y
+repetida en cada bloque. Los panorámicos quedaron en `assets/originales/` por si hay que
+rehacer el recorte.
 
 Cada stake, en lugar de un color plano, muestrea la textura:
 

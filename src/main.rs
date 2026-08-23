@@ -26,9 +26,9 @@ const MAX_FRAME_TIME: f32 = 0.1;
 const TITLE: &str = "PROYECTO 1 - RAYCASTER";
 
 /// Background of the title screen, in order of preference: the first one that
-/// loads is used. `pared.png` is the placeholder until there is a proper
+/// loads is used. `pared2.png` is the placeholder until there is a proper
 /// `menu.png`.
-const MENU_BACKGROUNDS: [&str; 2] = ["assets/menu.png", "assets/pared.png"];
+const MENU_BACKGROUNDS: [&str; 2] = ["assets/menu.png", "assets/pared2.png"];
 
 /// Looping footsteps, played while the player is actually moving.
 const STEPS_SOUND: &str = "assets/pasos.ogg";

@@ -6,39 +6,22 @@ use std::path::{Path, PathBuf};
 pub const TRANSPARENT_COLOR: Color = Color::new(152, 0, 136, 255);
 
 /// Which image file each maze character is painted with, in order of preference:
-/// the first candidate that exists wins. The three wall chars are only different
-/// cell types in the file — they are all the same block on screen — so a single
-/// `assets/wall.png` textures all of them, and dropping a specific file next to
-/// it overrides just that one.
+/// the first candidate that exists wins, so agregar un archivo cambia la textura
+/// sin tocar código.
 ///
 /// A character with no candidate on disk falls back to the flat colors of
 /// `render::cell_color`, so the game still runs with an empty `assets/`.
 const TEXTURE_FILES: [(char, &[&str]); 5] = [
-    // Las esquinas llevan la textura secundaria: son los postes entre tramos de
-    // muro, y darles otra imagen es lo que hace que se lea dónde termina una
-    // pared y empieza la otra.
-    (
-        '+',
-        &[
-            "assets/wall_corner.png",
-            "assets/pared.png",
-            "assets/wall.png",
-        ],
-    ),
-    // Los muros largos, con la textura principal.
-    (
-        '-',
-        &["assets/wall_h.png", "assets/enemigo.png", "assets/wall.png"],
-    ),
-    (
-        '|',
-        &["assets/wall_v.png", "assets/enemigo.png", "assets/wall.png"],
-    ),
+    // Cada tipo de pared con su propia imagen. `pared3.png` todavía no existe:
+    // en cuanto aparezca, las verticales dejan de compartir con las horizontales
+    // y el requisito de "una textura por cada pared distinta" queda cerrado.
+    ('+', &["assets/pared2.png", "assets/pared.png"]),
+    ('-', &["assets/pared.png"]),
+    ('|', &["assets/pared3.png", "assets/pared.png"]),
     ('g', &["assets/goal.png", "assets/meta.png"]),
     // El enemigo se dibuja con su fondo, como un cuadro: es una decisión, no un
-    // olvido. `enemy.png` queda como override por si algún día se quiere una
-    // versión recortada con alpha.
-    ('e', &["assets/enemy.png", "assets/pared2.png"]),
+    // olvido. Para recortarlo alcanza con que la imagen traiga canal alpha.
+    ('e', &["assets/enemigo.png"]),
 ];
 
 /// One texture already decoded to RGBA in a plain `Vec`, so sampling a pixel is

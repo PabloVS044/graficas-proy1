@@ -19,6 +19,10 @@ const MINIMAP_MARGIN: i32 = 12;
 /// Thickness of the frame drawn around the minimap.
 const MINIMAP_BORDER: i32 = 2;
 
+/// Water above and sand below, to match the underwater walls.
+const CEILING_COLOR: Color = Color::new(0x10, 0x3D, 0x52, 255);
+const FLOOR_COLOR: Color = Color::new(0x4A, 0x42, 0x2E, 255);
+
 /// Walls stop getting darker past this distance, in pixels.
 const MAX_SHADE_DISTANCE: f32 = 500.0;
 const MIN_SHADE: f32 = 0.30;
@@ -136,10 +140,12 @@ pub fn render_world(
     // makes a wall exactly fill the view when it spans the whole field of view.
     let distance_to_projection_plane = hw / (player.fov / 2.0).tan();
 
-    // Ceiling and floor first; the stakes are drawn over them.
-    framebuffer.set_current_color(Color::new(0x1B, 0x1E, 0x2B, 255));
+    // Ceiling and floor first; the stakes are drawn over them. The colors are
+    // deep water above and dark sand below: with the walls being underwater
+    // scenery, the old grey ceiling and brown floor read as a different place.
+    framebuffer.set_current_color(CEILING_COLOR);
     framebuffer.rect(0, 0, framebuffer.width, hh as i32);
-    framebuffer.set_current_color(Color::new(0x2E, 0x24, 0x24, 255));
+    framebuffer.set_current_color(FLOOR_COLOR);
     framebuffer.rect(
         0,
         hh as i32,
