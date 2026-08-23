@@ -14,7 +14,7 @@ pub struct Enemy {
 const NEAR_CLIP: f32 = 4.0;
 const FOV_MARGIN: f32 = 0.4;
 
-const SPRITE_SCALE: f32 = 0.55;
+const SPRITE_SCALE: f32 = 0.85;
 
 pub fn render_enemies(
     framebuffer: &mut Framebuffer,
@@ -50,21 +50,22 @@ pub fn render_enemies(
             continue;
         }
 
-        let block_height = (block_size as f32 / distance) * distance_to_projection_plane;
-        let sprite_size = block_height * SPRITE_SCALE;
-        let screen_x = hw + diff.tan() * distance_to_projection_plane;
-
-        let start_x = screen_x - sprite_size / 2.0;
-        let start_y = hh - sprite_size / 2.0;
-
         let Some((tex_width, tex_height)) = texture_manager.size(enemy.kind) else {
             continue;
         };
 
+        let block_height = (block_size as f32 / distance) * distance_to_projection_plane;
+        let sprite_h = block_height * SPRITE_SCALE;
+        let sprite_w = sprite_h * (tex_width as f32 / tex_height as f32);
+
+        let screen_x = hw + diff.tan() * distance_to_projection_plane;
+        let start_x = screen_x - sprite_w / 2.0;
+        let start_y = hh + block_height / 2.0 - sprite_h;
+
         let first_x = (start_x.floor() as i32).max(0);
-        let last_x = ((start_x + sprite_size).ceil() as i32).min(framebuffer.width);
+        let last_x = ((start_x + sprite_w).ceil() as i32).min(framebuffer.width);
         let first_y = (start_y.floor() as i32).max(0);
-        let last_y = ((start_y + sprite_size).ceil() as i32).min(framebuffer.height);
+        let last_y = ((start_y + sprite_h).ceil() as i32).min(framebuffer.height);
 
         let factor = shade_factor(distance);
 
@@ -73,11 +74,10 @@ pub fn render_enemies(
                 continue;
             }
 
-            let tx = ((x as f32 - start_x) / sprite_size * tex_width as f32) as u32;
+            let tx = ((x as f32 - start_x) / sprite_w * tex_width as f32) as u32;
 
             for y in first_y..last_y {
-                let ty = ((y as f32 - start_y) / sprite_size * tex_height as f32) as u32;
-
+                let ty = ((y as f32 - start_y) / sprite_h * tex_height as f32) as u32;
 
                 if let Some(color) = texture_manager.get_pixel(enemy.kind, tx, ty) {
                     framebuffer.set_pixel_color(x, y, shade(color, factor));

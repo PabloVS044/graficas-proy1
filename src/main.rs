@@ -27,11 +27,7 @@ const MENU_BACKGROUNDS: [&str; 2] = ["assets/menu.png", "assets/pared2.png"];
 const STEPS_SOUNDS: [&str; 2] = ["assets/pasos.ogg", "assets/caminar.mp3"];
 const STEPS_VOLUME: f32 = 0.7;
 
-const MUSIC_FILES: [&str; 3] = [
-    "assets/musica.ogg",
-    "assets/musica.mp3",
-    "assets/music.ogg",
-];
+const MUSIC_FILES: [&str; 3] = ["assets/musica.ogg", "assets/musica.mp3", "assets/music.ogg"];
 const MUSIC_VOLUME: f32 = 0.35;
 
 const WALKING_EPSILON: f32 = 0.05;

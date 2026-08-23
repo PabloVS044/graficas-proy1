@@ -19,7 +19,6 @@ impl Player {
     }
 }
 
-
 const MOVE_SPEED: f32 = 120.0;
 const ROTATION_SPEED: f32 = PI;
 

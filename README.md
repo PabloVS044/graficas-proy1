@@ -288,15 +288,16 @@ gris y rompe justo lo que se buscaba.
 El enemigo se dibuja al **55% de la altura de un bloque** a la misma distancia
 (`SPRITE_SCALE` en `src/sprites.rs`), no del tamaño de la pared.
 
-Va **centrado en el horizonte**, que es la altura de los ojos del jugador: son enemigos
-voladores, así que flotan en vez de apoyarse. Un sprite que caminara por el piso tendría
-que anclarse a la base del bloque (`hh + block_height / 2`) y colgar hacia arriba desde
-ahí; centrado, cualquier cosa más chica que un bloque queda flotando — que acá es
-justamente lo que se busca.
+Va **apoyado en el piso**: la base de un bloque cae en `hh + block_height / 2` y el sprite
+cuelga hacia arriba desde ahí. Centrarlo en el horizonte —lo natural cuando mide exactamente
+un bloque— dejaría al personaje flotando en el aire.
 
-El sprite se dibuja con su fondo, como un cuadro colgado; es una decisión y no un olvido.
-Si en algún momento se quiere recortado, alcanza con dejar un `assets/enemy.png` con canal
-alpha: va primero en la lista de candidatos.
+El **ancho sale de la proporción de la textura**, no de un cuadrado: `enemigo.png` es más
+alto que ancho (401×512), y forzarlo a cuadrado engordaba al personaje un 28%.
+
+La imagen se recorta al *bounding box* de su canal alpha antes de usarse. Los márgenes
+transparentes que traen los PNG recortados no son inocuos acá: con el sprite anclado al
+suelo, un margen vacío abajo lo deja levitando esa cantidad de píxeles.
 
 ## La cámara y el tiempo
 

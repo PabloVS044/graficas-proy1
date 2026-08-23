@@ -7,7 +7,6 @@ pub const GOAL: char = 'g';
 pub const ENEMY: char = 'e';
 const EMPTY: char = ' ';
 
-
 pub struct Maze {
     grid: Vec<Vec<char>>,
     pub width: usize,

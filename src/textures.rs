@@ -100,7 +100,6 @@ fn is_transparent_key(color: Color) -> bool {
         && color.b == TRANSPARENT_COLOR.b
 }
 
-
 pub fn asset_path(relative: &str) -> PathBuf {
     let local = PathBuf::from(relative);
     if local.exists() {
