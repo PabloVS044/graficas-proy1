@@ -35,6 +35,7 @@ cargo run --release -- --screenshot --level 3   # otro nivel
 | ↑ / ↓ | avanzar / retroceder, alias de W/S |
 | TAB   | soltar / recapturar el cursor |
 | M     | mostrar / ocultar el minimapa |
+| N     | silenciar / reanudar la música |
 | ESC   | salir |
 
 El cursor se captura al arrancar, como en cualquier FPS. `TAB` lo libera (y el HUD lo
@@ -248,6 +249,28 @@ principio mantiene la cadencia en vez de tropezar.
 
 `update_stream()` corre todos los frames aunque esté pausado: un sonido en streaming hay
 que alimentarlo o se queda sin buffer.
+
+La **música de fondo** usa el mismo mecanismo, con dos diferencias: arranca sola al abrir
+el juego y no se detiene nunca, así que suena también bajo los menús y la pantalla de
+victoria; y va a `0.35` de volumen contra el `0.7` de los pasos, porque es una cama sonora
+y además tiene que dejar lugar a los efectos que faltan. `N` la silencia.
+
+La música se sirve acelerada **×2** (`atempo`, que sube la velocidad sin tocar el tono):
+`musica.ogg` sale de `musica.mp3`, que queda como original por si hay que rehacerla.
+
+Al convertir hay una trampa: el MP3 traía **carátula embebida**, y ffmpeg la convirtió en un
+stream de video Theora dentro del OGG. raylib no abre un OGG multiplexado con video, así que
+el archivo fallaba en silencio y el juego caía al MP3 sin acelerar. La conversión lleva
+`-vn` justamente por eso:
+
+```bash
+ffmpeg -i assets/musica.mp3 -vn -af "atempo=2.0" -c:a libvorbis -q:a 5 assets/musica.ogg
+```
+
+Los dos clips se cargan con el mismo `load_loop`, que recorre una lista de candidatos y se
+queda con el primero que exista — el mismo criterio que las texturas, así que agregar el
+archivo alcanza para que suene, sin tocar código. Todo es `Music` y no `Sound` incluso para
+clips cortos: solo el tipo con streaming se puede pausar y reanudar.
 
 ## El piso y el cielo
 

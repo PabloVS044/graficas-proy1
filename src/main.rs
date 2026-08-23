@@ -18,28 +18,24 @@ use textures::{TextureManager, asset_path};
 const WINDOW_WIDTH: i32 = 800;
 const WINDOW_HEIGHT: i32 = 600;
 
-/// Upper bound for the frame time fed to the movement code, in seconds. Without
-/// it, the very first frame (or a hitch while another window steals the CPU)
-/// would be integrated as one huge step.
 const MAX_FRAME_TIME: f32 = 0.1;
 
 const TITLE: &str = "PROYECTO 1 - RAYCASTER";
 
-/// Background of the title screen, in order of preference: the first one that
-/// loads is used. `pared2.png` is the placeholder until there is a proper
-/// `menu.png`.
 const MENU_BACKGROUNDS: [&str; 2] = ["assets/menu.png", "assets/pared2.png"];
 
-/// Looping footsteps, played while the player is actually moving.
-const STEPS_SOUND: &str = "assets/pasos.ogg";
+const STEPS_SOUNDS: [&str; 2] = ["assets/pasos.ogg", "assets/caminar.mp3"];
 const STEPS_VOLUME: f32 = 0.7;
 
-/// Distance in pixels the player has to cover in one frame for the footsteps to
-/// count as walking. It is measured on the *real* position, so pushing against a
-/// wall (where the intent is there but nothing moves) stays silent.
+const MUSIC_FILES: [&str; 3] = [
+    "assets/musica.ogg",
+    "assets/musica.mp3",
+    "assets/music.ogg",
+];
+const MUSIC_VOLUME: f32 = 0.35;
+
 const WALKING_EPSILON: f32 = 0.05;
 
-/// Which screen the game is on.
 #[derive(PartialEq)]
 enum Screen {
     Menu,
@@ -47,14 +43,12 @@ enum Screen {
     Victory,
 }
 
-/// The levels offered on the title screen, easiest first.
 const LEVELS: [(&str, &str); 3] = [
     ("1 - Facil", "maze.txt"),
     ("2 - Normal", "maze2.txt"),
     ("3 - Dificil", "maze3.txt"),
 ];
 
-/// What is offered after winning.
 const VICTORY_OPTIONS: [&str; 3] = [
     "Seguir explorando",
     "Reiniciar el nivel",
@@ -64,10 +58,6 @@ const OPTION_FREEROAM: usize = 0;
 const OPTION_RESTART: usize = 1;
 const OPTION_MENU: usize = 2;
 
-/// Everything that changes when a different maze is loaded.
-///
-/// It is all derived from the file, so switching levels is just building another
-/// one of these: nothing else in the game holds on to the old maze.
 struct Level {
     maze: Maze,
     block_size: usize,
@@ -79,9 +69,6 @@ struct Level {
 fn load_level(file: &str) -> Level {
     let maze = Maze::load(asset_path(file).to_str().unwrap());
 
-    // World scale: one maze cell is this many pixels. Bigger mazes get smaller
-    // cells so the whole thing still fits the same window. The minimap scales it
-    // down on its own, so this only has to be comfortable to walk around in.
     let block_size = (WINDOW_WIDTH as usize / maze.width)
         .min(WINDOW_HEIGHT as usize / maze.height)
         .max(8);
@@ -92,8 +79,6 @@ fn load_level(file: &str) -> Level {
         .unwrap_or_else(|| panic!("el laberinto '{file}' no tiene celda 'p' de spawn"));
     let goal = maze.find(GOAL);
 
-    // Sprites are placed from the map itself: every `e` cell becomes an enemy
-    // standing at the center of that cell.
     let enemies: Vec<Enemy> = maze
         .find_all(ENEMY)
         .into_iter()
@@ -113,8 +98,6 @@ fn load_level(file: &str) -> Level {
 }
 
 fn main() {
-    // `--level 2` starts on that level. Only useful together with `--screenshot`,
-    // to look at a maze without walking to it.
     let mut level_choice = std::env::args()
         .skip_while(|arg| arg != "--level")
         .nth(1)
@@ -131,29 +114,17 @@ fn main() {
         .build();
     window.set_target_fps(60);
 
-    // Loaded once: every wall pixel drawn from here on samples these images.
     let texture_manager = TextureManager::new();
 
     let mut framebuffer = Framebuffer::new(WINDOW_WIDTH, WINDOW_HEIGHT, Color::BLACK);
     let mut show_minimap = true;
 
-    // After winning, the player can keep walking around the level. The goal stops
-    // triggering then, or reaching it again would throw the victory screen back
-    // in their face.
     let mut freeroam = false;
     let mut run_started = 0.0;
     let mut run_time = 0.0;
     let mut victory_choice = OPTION_FREEROAM;
-    // Whether the pad's menu axis was resting last frame, so holding the stick
-    // moves the selection once instead of every frame.
     let mut pad_menu_rested = true;
 
-    // Background for the title screen. It is a plain GPU texture, not a
-    // `TextureManager` entry: that one keeps pixels on the CPU to sample them one
-    // by one with tx/ty, and here the image is blitted whole.
-    //
-    // Same idea as the wall textures: the first candidate that loads wins, so
-    // dropping a `menu.png` in `assets/` takes over without touching any code.
     let menu_background = MENU_BACKGROUNDS.iter().find_map(|path| {
         let full = asset_path(path);
         window
@@ -164,10 +135,6 @@ fn main() {
         eprintln!("aviso: sin fondo de menú (se buscó {MENU_BACKGROUNDS:?}); queda en negro");
     }
 
-    // `cargo run -- --screenshot` draws one full frame, saves the window to disk
-    // and exits, which is handy for checking the render without playing.
-    // `--menu` and `--victory` do the same for the other two screens, which
-    // otherwise can only be seen by playing.
     if std::env::args().any(|arg| arg == "--screenshot") {
         let menu_shot = std::env::args().any(|arg| arg == "--menu");
         let victory_shot = std::env::args().any(|arg| arg == "--victory");
@@ -210,41 +177,30 @@ fn main() {
         return;
     }
 
-    // Audio. Both the device and the clips live here in `main` instead of in a
-    // struct of their own: a `Music` borrows the device it came from, so keeping
-    // the two together in one type would make it self-referential.
     let audio = RaylibAudio::init_audio_device().ok();
     if audio.is_none() {
         eprintln!("aviso: no se pudo abrir el audio; el juego corre en silencio");
     }
-    let steps = audio.as_ref().and_then(|device| {
-        let path = asset_path(STEPS_SOUND);
-        match device.new_music(path.to_str().unwrap_or(STEPS_SOUND)) {
-            Ok(mut music) => {
-                music.set_looping(true);
-                music.set_volume(STEPS_VOLUME);
-                Some(music)
-            }
-            Err(e) => {
-                eprintln!("aviso: no se pudo cargar '{STEPS_SOUND}' ({e}); sin pasos");
-                None
-            }
-        }
-    });
-    // `play` restarts from the beginning while `resume` continues, so walking in
-    // bursts needs to know whether the clip was ever started.
+    let steps = audio
+        .as_ref()
+        .and_then(|device| load_loop(device, &STEPS_SOUNDS, STEPS_VOLUME, "pasos"));
+
+    let music = audio
+        .as_ref()
+        .and_then(|device| load_loop(device, &MUSIC_FILES, MUSIC_VOLUME, "música"));
+    if let Some(track) = &music {
+        track.play_stream();
+    }
+    let mut music_on = true;
     let mut steps_started = false;
     let mut steps_playing = false;
 
-    // The title screen owns the cursor: it is only captured once the game starts.
     let mut screen = Screen::Menu;
     let mut mouse_look = true;
 
     while !window.window_should_close() {
         let dt = window.get_frame_time().min(MAX_FRAME_TIME);
 
-        // Only true while the player is really moving through the level, so the
-        // footsteps stop on the menus and against walls.
         let mut walking = false;
 
         match screen {
@@ -255,8 +211,6 @@ fn main() {
                 }
 
                 if confirm_pressed(&window) {
-                    // The maze only gets read here: everything derived from it
-                    // (scale, spawn, goal, enemies) is rebuilt with it.
                     level = load_level(LEVELS[level_choice].1);
                     player = Player::new(level.spawn);
                     freeroam = false;
@@ -267,7 +221,6 @@ fn main() {
                 }
             }
             Screen::Playing => {
-                // 1. show or hide the minimap, release or recapture the cursor
                 if window.is_key_pressed(KeyboardKey::KEY_M) {
                     show_minimap = !show_minimap;
                 }
@@ -280,12 +233,6 @@ fn main() {
                     }
                 }
 
-                // 2. move the player on user input. Keyboard, mouse and pad all
-                //    end up in the same `Intent`, merged so that using two of them
-                //    at once does not move at double speed. Speeds are per second,
-                //    so they need the frame time; the first frame (and any hitch)
-                //    is clamped so a long one can't teleport the player through a
-                //    wall.
                 let mouse_dx = read_mouse_look(&mut window, mouse_look);
                 let intent =
                     player::keyboard_intent(&window, mouse_dx).merge(gamepad::intent(&window));
@@ -319,8 +266,6 @@ fn main() {
                             mouse_look = true;
                         }
                         OPTION_MENU => screen = Screen::Menu,
-                        // Free roam: the level stays as it is and the goal stops
-                        // counting, so walking over it again changes nothing.
                         _ => {
                             freeroam = true;
                             screen = Screen::Playing;
@@ -332,36 +277,37 @@ fn main() {
             }
         }
 
-        // 3. keep the footsteps in sync with the feet
-        if let Some(music) = &steps {
-            // A streamed sound has to be fed every frame or it runs dry.
-            music.update_stream();
+        if let Some(track) = &music {
+            track.update_stream();
+            if window.is_key_pressed(KeyboardKey::KEY_N) {
+                music_on = !music_on;
+                if music_on {
+                    track.resume_stream();
+                } else {
+                    track.pause_stream();
+                }
+            }
+        }
+
+        if let Some(steps_clip) = &steps {
+            steps_clip.update_stream();
 
             if walking && !steps_playing {
                 if steps_started {
-                    // Continue where it left off: restarting would replay the
-                    // first tap every time the player taps the key.
-                    music.resume_stream();
+                    steps_clip.resume_stream();
                 } else {
-                    music.play_stream();
+                    steps_clip.play_stream();
                     steps_started = true;
                 }
                 steps_playing = true;
             } else if !walking && steps_playing {
-                music.pause_stream();
+                steps_clip.pause_stream();
                 steps_playing = false;
             }
         }
 
-        // 4. clear framebuffer
         framebuffer.clear();
 
-        // 5. draw stuff: the 3D world first (which fills the z-buffer), then the
-        //    sprites depth-tested against it, and the minimap on top of both.
-        //    The menu draws none of it: it is a full screen image over a cleared
-        //    buffer, so raycasting a frame nobody sees would be wasted work.
-        //    The victory screen keeps the world behind it, so it reads as an
-        //    overlay on the level instead of a hard cut to a different place.
         if screen != Screen::Menu {
             let zbuffer = render::render_world(
                 &mut framebuffer,
@@ -407,7 +353,6 @@ fn main() {
     }
 }
 
-/// The title screen: background, a dark veil over it, and the text.
 fn draw_menu(
     d: &mut RaylibDrawHandle,
     background: Option<&Texture2D>,
@@ -419,12 +364,10 @@ fn draw_menu(
         draw_background_cover(d, texture);
     }
 
-    // Veil, so the text stays readable over any image.
     d.draw_rectangle(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, Color::new(0, 0, 0, 130));
 
     draw_centered_text(d, TITLE, 190, 40, Color::WHITESMOKE);
 
-    // Blinking, so the eye goes to the line that says what to do.
     let blink = (time * 3.0).sin() * 0.5 + 0.5;
     let alpha = (150.0 + 105.0 * blink) as u8;
     draw_centered_text(
@@ -445,14 +388,12 @@ fn draw_menu(
     draw_centered_text(d, confirm, 435, 18, Color::LIGHTGRAY);
 
     let controls = match pad {
-        Some(_) => "WASD + mouse  o  sticks del mando  |  TAB cursor  |  M minimapa",
-        None => "WASD + mouse  |  TAB cursor  |  M minimapa",
+        Some(_) => "WASD + mouse  o  sticks del mando  |  TAB cursor  |  M minimapa  |  N musica",
+        None => "WASD + mouse  |  TAB cursor  |  M minimapa  |  N musica",
     };
     draw_centered_text(d, controls, 462, 16, Color::GRAY);
     draw_centered_text(d, "ESC para salir", 486, 16, Color::GRAY);
 
-    // Naming the pad is the proof it is really connected, which is the point of
-    // the whole feature.
     if let Some(name) = pad {
         draw_centered_text(
             d,
@@ -464,12 +405,6 @@ fn draw_menu(
     }
 }
 
-/// How many places the selection moves this frame: -1 up, 1 down, 0 still.
-///
-/// Keys have an edge of their own (`is_key_pressed`), and so does the D-pad, but
-/// the stick is an axis that stays pushed: `pad_rested` remembers whether it was
-/// centered last frame, so holding it moves one step instead of running through
-/// the list sixty times a second.
 fn menu_step(window: &RaylibHandle, pad_rested: &mut bool) -> i32 {
     let mut step = 0;
     if window.is_key_pressed(KeyboardKey::KEY_UP) || window.is_key_pressed(KeyboardKey::KEY_W) {
@@ -488,21 +423,16 @@ fn menu_step(window: &RaylibHandle, pad_rested: &mut bool) -> i32 {
     step
 }
 
-/// Whether the player is asking to confirm the highlighted option.
 fn confirm_pressed(window: &RaylibHandle) -> bool {
     window.is_key_pressed(KeyboardKey::KEY_ENTER)
         || window.is_key_pressed(KeyboardKey::KEY_SPACE)
         || gamepad::confirm_pressed(window)
 }
 
-/// Moves `choice` by `step`, wrapping around the ends.
 fn wrap_choice(choice: usize, step: i32, count: usize) -> usize {
-    // rem_euclid so that going up from the first option lands on the last one
-    // instead of going negative.
     (choice as i32 + step).rem_euclid(count as i32) as usize
 }
 
-/// A vertical list of options with the selected one highlighted.
 fn draw_option_list(
     d: &mut RaylibDrawHandle,
     options: &[&str],
@@ -512,8 +442,6 @@ fn draw_option_list(
 ) {
     for (i, option) in options.iter().enumerate() {
         let selected = i == choice;
-        // The arrow carries the selection as much as the color does: a color
-        // difference alone is easy to miss on top of a busy level.
         let label = if selected {
             format!("> {option} <")
         } else {
@@ -534,7 +462,6 @@ fn draw_option_list(
     }
 }
 
-/// The success screen, drawn over the frozen level.
 fn draw_victory(d: &mut RaylibDrawHandle, choice: usize, run_time: f32, pad: Option<&str>) {
     d.draw_rectangle(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, Color::new(0, 0, 0, 160));
 
@@ -557,19 +484,15 @@ fn draw_victory(d: &mut RaylibDrawHandle, choice: usize, run_time: f32, pad: Opt
     draw_centered_text(d, "ESC para salir", 470, 18, Color::GRAY);
 }
 
-/// Draws `texture` filling the window without deforming it: the overflowing side
-/// is cropped instead of squashed. The images used here are portrait, so
-/// stretching them to a 800x600 window would be very visible.
 fn draw_background_cover(d: &mut RaylibDrawHandle, texture: &Texture2D) {
     let (tw, th) = (texture.width as f32, texture.height as f32);
     let window_ratio = WINDOW_WIDTH as f32 / WINDOW_HEIGHT as f32;
     let texture_ratio = tw / th;
 
-    // Take the biggest centered piece of the image with the window's proportions.
     let (src_w, src_h) = if texture_ratio > window_ratio {
-        (th * window_ratio, th) // too wide: crop the sides
+        (th * window_ratio, th)
     } else {
-        (tw, tw / window_ratio) // too tall: crop top and bottom
+        (tw, tw / window_ratio)
     };
 
     d.draw_texture_pro(
@@ -582,57 +505,50 @@ fn draw_background_cover(d: &mut RaylibDrawHandle, texture: &Texture2D) {
     );
 }
 
-/// Text centered horizontally, with a dark shadow under it.
-///
-/// The width is measured instead of guessed: an eyeballed offset goes crooked as
-/// soon as the string changes. The shadow is the same reason the crosshair has an
-/// outline — plain text over a photo disappears on the light patches.
 fn draw_centered_text(d: &mut RaylibDrawHandle, text: &str, y: i32, size: i32, color: Color) {
     let x = (WINDOW_WIDTH - d.measure_text(text, size)) / 2;
     d.draw_text(text, x + 2, y + 2, size, Color::new(0, 0, 0, 180));
     d.draw_text(text, x, y, size, color);
 }
 
-/// Center of the window, where the pointer is parked while the mouse aims.
+fn load_loop<'a>(
+    device: &'a RaylibAudio,
+    candidates: &[&str],
+    volume: f32,
+    what: &str,
+) -> Option<Music<'a>> {
+    for path in candidates {
+        let full = asset_path(path);
+        if !full.exists() {
+            continue;
+        }
+        match device.new_music(full.to_str().unwrap_or(path)) {
+            Ok(mut clip) => {
+                clip.set_looping(true);
+                clip.set_volume(volume);
+                return Some(clip);
+            }
+            Err(e) => eprintln!("aviso: no se pudo cargar '{path}' ({e})"),
+        }
+    }
+    eprintln!("aviso: sin {what} (se buscó {candidates:?})");
+    None
+}
+
 fn window_center() -> Vector2 {
     Vector2::new(WINDOW_WIDTH as f32 / 2.0, WINDOW_HEIGHT as f32 / 2.0)
 }
 
-/// Hides the cursor and parks it in the center.
-///
-/// It hides the cursor instead of disabling it, and that distinction is the
-/// whole trick. `disable_cursor` puts GLFW in `CURSOR_DISABLED`, and in that mode
-/// `glfwSetCursorPos` stops warping the real pointer: it only updates an internal
-/// *virtual* position. So the re-centering below would do nothing, and since the
-/// pointer grab does not confine anything under XWayland, the pointer would walk
-/// out of the window and the camera would stop turning. In `CURSOR_HIDDEN` the
-/// warp is a real `XWarpPointer`, which is what keeps the pointer inside.
-///
-/// Centering is not cosmetic either: the mouse look measures against the center,
-/// so starting (or coming back from TAB) with the pointer anywhere else would be
-/// read as one big movement and snap the camera.
 fn capture_cursor(window: &mut RaylibHandle) {
     window.hide_cursor();
     window.set_mouse_position(window_center());
 }
 
-/// Gives the cursor back to the desktop.
 fn release_cursor(window: &mut RaylibHandle) {
-    window.enable_cursor(); // also undoes `hide_cursor`
+    window.enable_cursor();
 }
 
-/// How many pixels the mouse moved horizontally this frame, and puts the pointer
-/// back in the middle of the window.
-///
-/// The movement is measured against the center and the pointer is warped back
-/// there every frame, because the cursor lock does not confine anything under
-/// XWayland: a long horizontal sweep walks the pointer out of the window, onto
-/// the desktop, and the camera silently stops turning. Warping it back keeps it
-/// inside whatever the compositor does — see `capture_cursor` for why the cursor
-/// is hidden rather than disabled, which is what makes the warp actually work.
 fn read_mouse_look(window: &mut RaylibHandle, mouse_look: bool) -> f32 {
-    // Not while the cursor is released, and not while another window has focus:
-    // warping the pointer then would fight the desktop.
     if !mouse_look || !window.is_window_focused() {
         return 0.0;
     }
@@ -643,7 +559,6 @@ fn read_mouse_look(window: &mut RaylibHandle, mouse_look: bool) -> f32 {
     dx
 }
 
-/// Everything drawn on top of the raycast image, in window coordinates.
 fn draw_hud(
     d: &mut RaylibDrawHandle,
     fps: u32,
@@ -656,15 +571,13 @@ fn draw_hud(
         None => "WASD + mouse",
     };
     d.draw_text(
-        &format!("{input}  |  TAB: cursor  |  M: minimapa  |  {fps} FPS"),
+        &format!("{input}  |  TAB: cursor  |  M: minimapa  |  N: musica  |  {fps} FPS"),
         10,
         10,
         18,
         Color::WHITESMOKE,
     );
 
-    // While the cursor is free the mouse doesn't aim, and that is easy to
-    // mistake for the camera being broken. Say it on screen.
     if !mouse_look {
         d.draw_text(
             "cursor libre - TAB para volver a mirar con el mouse",
@@ -677,8 +590,6 @@ fn draw_hud(
 
     draw_crosshair(d);
 
-    // After winning, the goal no longer does anything: saying so avoids looking
-    // like the victory screen is broken when walking over it again.
     if freeroam {
         d.draw_text(
             "modo libre - nivel completado",
@@ -690,24 +601,16 @@ fn draw_hud(
     }
 }
 
-/// Length of each arm of the crosshair, in pixels.
 const CROSSHAIR_LENGTH: i32 = 8;
-/// Space left empty around the exact center, so the aimed point stays visible.
 const CROSSHAIR_GAP: i32 = 5;
 const CROSSHAIR_THICKNESS: i32 = 2;
 
-/// A fixed cross at the center of the screen.
-///
-/// It never moves: the center column of the render is the ray cast at exactly
-/// `player.a`, and every stake is centered on the horizon, so the center of the
-/// window already *is* the point the player is looking at.
 fn draw_crosshair(d: &mut RaylibDrawHandle) {
     let center_x = WINDOW_WIDTH / 2;
     let center_y = WINDOW_HEIGHT / 2;
     let thickness = CROSSHAIR_THICKNESS;
     let half = thickness / 2;
 
-    // (x, y, width, height) of the four arms, growing away from the center.
     let arms = [
         (
             center_x - half,
@@ -736,7 +639,6 @@ fn draw_crosshair(d: &mut RaylibDrawHandle) {
     ];
 
     for (x, y, width, height) in arms {
-        // Dark outline first, so the crosshair reads against light walls too.
         d.draw_rectangle(
             x - 1,
             y - 1,

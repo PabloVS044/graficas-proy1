@@ -134,7 +134,6 @@ pub fn render_world(
 
         let stake_height = (block_size as f32 / distance_to_wall) * distance_to_projection_plane;
 
-        // Calculate the position to draw the stake
         let stake_top = hh - (stake_height / 2.0);
         let stake_bottom = hh + (stake_height / 2.0);
 

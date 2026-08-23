@@ -2,17 +2,12 @@ use raylib::prelude::*;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 
-/// Cells that the player (and rays) can pass through.
 pub const SPAWN: char = 'p';
 pub const GOAL: char = 'g';
-/// Where a sprite stands. It has to be walkable: an enemy is drawn as a
-/// billboard on top of the world, not as a solid block, so rays go through it.
 pub const ENEMY: char = 'e';
 const EMPTY: char = ' ';
 
-/// The maze as a 2D grid of chars, plus its dimensions so callers don't have to
-/// re-measure the rows every time. Indexing is `(i, j)` = `(column, row)`, the
-/// same convention the caster uses.
+
 pub struct Maze {
     grid: Vec<Vec<char>>,
     pub width: usize,
@@ -30,8 +25,6 @@ impl Maze {
             .map(|line| line.unwrap().trim_end_matches('\r').chars().collect())
             .collect();
 
-        // Drop trailing blank lines and pad every row to the same length, so a
-        // hand-edited file with ragged rows still indexes safely.
         while grid.last().is_some_and(|row| row.is_empty()) {
             grid.pop();
         }
@@ -50,8 +43,6 @@ impl Maze {
         }
     }
 
-    /// The char at a cell. Anything outside the grid counts as wall, which is
-    /// what stops a ray that escapes through a hole in the border.
     pub fn cell(&self, i: usize, j: usize) -> char {
         if j >= self.height || i >= self.width {
             return '+';
@@ -59,13 +50,10 @@ impl Maze {
         self.grid[j][i]
     }
 
-    /// Walls are every char that isn't walkable: `+`, `-` and `|` in our file.
     pub fn is_wall(&self, i: usize, j: usize) -> bool {
         !matches!(self.cell(i, j), EMPTY | SPAWN | GOAL | ENEMY)
     }
 
-    /// Same test, but taking world coordinates in pixels. Negative coordinates
-    /// are outside the maze, so they count as wall.
     pub fn is_wall_at_pixel(&self, x: f32, y: f32, block_size: usize) -> bool {
         if x < 0.0 || y < 0.0 {
             return true;
@@ -73,8 +61,6 @@ impl Maze {
         self.is_wall(x as usize / block_size, y as usize / block_size)
     }
 
-    /// First cell holding `target`, scanning top-down / left-right. Used to find
-    /// the `p` spawn and the `g` goal.
     pub fn find(&self, target: char) -> Option<(usize, usize)> {
         for (j, row) in self.grid.iter().enumerate() {
             for (i, &cell) in row.iter().enumerate() {
@@ -86,7 +72,6 @@ impl Maze {
         None
     }
 
-    /// Every cell holding `target`. Used to place the sprites marked with `e`.
     pub fn find_all(&self, target: char) -> Vec<(usize, usize)> {
         let mut found = Vec::new();
         for (j, row) in self.grid.iter().enumerate() {
@@ -107,7 +92,6 @@ impl Maze {
         )
     }
 
-    /// Which cell a world position falls in.
     pub fn cell_at_pixel(&self, pos: Vector2, block_size: usize) -> (usize, usize) {
         (
             pos.x.max(0.0) as usize / block_size,

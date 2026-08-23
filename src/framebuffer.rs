@@ -1,16 +1,5 @@
 use raylib::prelude::*;
 
-/// A CPU-side pixel buffer. Everything the raycaster draws goes here, and the
-/// whole buffer is uploaded to the GPU once per frame in `swap_buffers`.
-///
-/// Pixels live in a plain `Vec<u8>` (RGBA, row major) instead of inside the
-/// raylib `Image`: textured stakes and sprites set a different color on every
-/// single pixel, which through the `Image` API would be one FFI call per pixel,
-/// up to a million per frame. The `Image` is only kept as the staging buffer
-/// handed to the GPU.
-///
-/// Origin is top-left (x to the right, y down), matching the maze layout: row 0
-/// of `maze.txt` is the top row on screen.
 pub struct Framebuffer {
     pub width: i32,
     pub height: i32,
@@ -18,9 +7,6 @@ pub struct Framebuffer {
     color_buffer: Image,
     current_color: Color,
     background_color: Color,
-    /// Applied to every draw call as `pixel = world * scale + offset`. This is
-    /// what lets the minimap shrink the whole maze into a corner while the
-    /// renderer (and `cast_ray`) keep working in plain world coordinates.
     scale: f32,
     offset_x: i32,
     offset_y: i32,
@@ -84,9 +70,6 @@ impl Framebuffer {
         self.set_pixel_color(x, y, self.current_color);
     }
 
-    /// Writes one pixel in screen coordinates, ignoring the transform and the
-    /// current color. This is the entry point for textured stakes and sprites,
-    /// where the color changes on every pixel.
     pub fn set_pixel_color(&mut self, x: i32, y: i32, color: Color) {
         if x < 0 || x >= self.width || y < 0 || y >= self.height {
             return;
@@ -98,10 +81,6 @@ impl Framebuffer {
         self.pixels[idx + 3] = color.a;
     }
 
-    /// Filled rectangle in the current color. Used for maze cells in the 2D view
-    /// and for the sky/floor bands in the 3D view.
-    /// Maps both corners instead of scaling the size, so scaled-down cells tile
-    /// exactly: no seams between them and no overlap.
     pub fn rect(&mut self, x: i32, y: i32, width: i32, height: i32) {
         let x0 = self.map_x(x);
         let y0 = self.map_y(y);
@@ -110,9 +89,6 @@ impl Framebuffer {
         self.fill_rect(x0, y0, x1, y1, self.current_color);
     }
 
-    /// One vertical span of pixels in the current color: this is a "stake", the
-    /// single column of wall the 3D renderer draws per ray. Clamped to the
-    /// buffer, so stakes taller than the screen are simply cut off.
     pub fn vertical_line(&mut self, x: i32, y_start: i32, y_end: i32) {
         let x = self.map_x(x);
         if x < 0 || x >= self.width {
@@ -126,8 +102,6 @@ impl Framebuffer {
         self.fill_rect(x, top, x + 1, bottom + 1, self.current_color);
     }
 
-    /// The position is transformed but the radius is not: a marker has to stay
-    /// visible even when the minimap shrinks the world around it.
     pub fn circle(&mut self, center_x: i32, center_y: i32, radius: i32) {
         let cx = self.map_x(center_x);
         let cy = self.map_y(center_y);
@@ -141,7 +115,6 @@ impl Framebuffer {
         }
     }
 
-    /// Half-open rectangle in screen coordinates, clipped to the buffer.
     fn fill_rect(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: Color) {
         let x0 = x0.max(0);
         let y0 = y0.max(0);
@@ -160,8 +133,6 @@ impl Framebuffer {
         }
     }
 
-    /// Upload the buffer and present it. `hud` runs inside the same drawing pass,
-    /// so text drawn there lands on top of the framebuffer instead of clearing it.
     pub fn swap_buffers<F>(&mut self, window: &mut RaylibHandle, thread: &RaylibThread, hud: F)
     where
         F: FnOnce(&mut RaylibDrawHandle),
@@ -175,9 +146,6 @@ impl Framebuffer {
         }
     }
 
-    /// Copies the CPU pixels into the raylib `Image` that gets sent to the GPU.
-    /// `gen_image_color` gives us R8G8B8A8, the same layout as `self.pixels`, so
-    /// this is a straight memcpy.
     fn upload(&mut self) {
         debug_assert_eq!(
             self.color_buffer.format(),
@@ -192,7 +160,6 @@ impl Framebuffer {
         }
     }
 
-    /// Exports the raw buffer, without the HUD drawn over it.
     #[allow(dead_code)]
     pub fn render_to_file(&mut self, file_path: &str) {
         self.upload();
