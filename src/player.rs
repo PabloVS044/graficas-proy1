@@ -19,7 +19,11 @@ impl Player {
     }
 }
 
-const MOVE_SPEED: f32 = 120.0;
+/// Velocidad de avance en **celdas por segundo**, no en píxeles: `block_size`
+/// cambia con el nivel y con el tamaño de la ventana, así que una velocidad en
+/// píxeles haría que el mismo juego se sintiera más rápido en los mapas grandes
+/// y más lento al agrandar la ventana.
+const MOVE_SPEED: f32 = 5.0;
 const ROTATION_SPEED: f32 = PI;
 
 #[derive(Default, Clone, Copy)]
@@ -99,8 +103,9 @@ pub fn apply_intent(
         return false;
     }
 
-    let forward = intent.forward * MOVE_SPEED * dt;
-    let strafe = intent.strafe * MOVE_SPEED * dt;
+    let speed = MOVE_SPEED * block_size as f32 * dt;
+    let forward = intent.forward * speed;
+    let strafe = intent.strafe * speed;
 
     let (sin_a, cos_a) = player.a.sin_cos();
     let dx = forward * cos_a - strafe * sin_a;

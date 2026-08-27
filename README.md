@@ -82,8 +82,30 @@ Origen del framebuffer: **arriba-izquierda**, x a la derecha y y hacia abajo, pa
 que la fila 0 de `maze.txt` sea la fila de arriba en pantalla. Por eso el ángulo
 `a` crece en sentido de las agujas del reloj.
 
-`block_size` (el tamaño de una celda en pixeles del mundo) se calcula al cargar cada
-nivel: 24 px en el mapa de 33×11, 16 en el de 49×15 y 12 en el de 65×19.
+La ventana es de **1280×720**. `block_size` (el tamaño de una celda en pixeles del mundo)
+se calcula al cargar cada nivel a partir de ella: 38 px en el mapa de 33×11, 26 en el de
+49×15 y 19 en el de 65×19.
+
+Por eso la velocidad del jugador está en **celdas por segundo** y no en píxeles. Con una
+velocidad en píxeles fija, el nivel 3 se jugaba al **doble de rápido** que el 1 (10 contra
+5 celdas/s, porque sus celdas son la mitad de grandes), y agrandar la ventana frenaba el
+juego entero. En celdas/s los tres niveles se sienten igual a cualquier resolución.
+
+Las pantallas se posicionan con `y_frac` y `font`, fracciones del alto de la ventana: los
+valores en píxeles estaban calculados para 600 px de alto y se apelotonaban arriba al
+agrandarla.
+
+Costo medido a 1280×720: **11.3 ms/frame** de raycasting, y **59 FPS reales** contra el
+tope de 60 del `set_target_fps`.
+
+Esos dos números no son lo mismo, y la diferencia enseñó algo: al pasar a 720p los FPS
+reales cayeron a **51** aunque el raycasting entraba de sobra en el presupuesto de 16.6 ms.
+Lo que faltaba medir era `swap_buffers`, que **creaba una textura de GPU nueva en cada
+frame** — a 720p, pedir y liberar 3.7 MB de memoria de video 60 veces por segundo costaba
+más que todo el raycasting junto. Creándola una sola vez y usando `update_texture` después,
+los FPS volvieron a 59. De paso, como `update_texture` lee el `Vec` directo, el `Image`
+intermedio solo se llena al crear la textura y para `render_to_file`, ahorrando otro memcpy
+de 3.7 MB por frame.
 
 ## El minimapa
 

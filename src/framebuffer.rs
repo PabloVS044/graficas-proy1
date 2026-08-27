@@ -5,6 +5,9 @@ pub struct Framebuffer {
     pub height: i32,
     pixels: Vec<u8>,
     color_buffer: Image,
+    /// Textura de GPU reusada entre frames. Se crea en el primer `swap_buffers`,
+    /// que es cuando hay acceso a la ventana.
+    gpu: Option<Texture2D>,
     current_color: Color,
     background_color: Color,
     scale: f32,
@@ -21,6 +24,7 @@ impl Framebuffer {
             height,
             pixels,
             color_buffer,
+            gpu: None,
             current_color: Color::WHITE,
             background_color,
             scale: 1.0,
@@ -133,17 +137,39 @@ impl Framebuffer {
         }
     }
 
+    /// Sube el buffer y lo presenta. `hud` corre dentro del mismo pase de dibujo,
+    /// así que lo que dibuje queda encima del framebuffer en vez de borrarlo.
+    ///
+    /// La textura de GPU se crea **una sola vez** y después solo se actualiza su
+    /// contenido. Crear una textura nueva por frame significa pedir y liberar
+    /// memoria de video 60 veces por segundo: a 1280×720 son 3.7 MB por vuelta, y
+    /// eso costaba más que todo el raycasting junto.
     pub fn swap_buffers<F>(&mut self, window: &mut RaylibHandle, thread: &RaylibThread, hud: F)
     where
         F: FnOnce(&mut RaylibDrawHandle),
     {
-        self.upload();
-        if let Ok(texture) = window.load_texture_from_image(thread, &self.color_buffer) {
-            let mut d = window.begin_drawing(thread);
-            d.clear_background(Color::BLACK);
-            d.draw_texture(&texture, 0, 0, Color::WHITE);
-            hud(&mut d);
+        if self.gpu.is_none() {
+            // El `Image` solo hace falta para crear la textura la primera vez y
+            // para `render_to_file`; a partir de ahí `update_texture` lee nuestro
+            // `Vec` directo, así que copiarle los pixeles cada frame sería un
+            // memcpy de 3.7 MB al pedo.
+            self.upload();
+            self.gpu = window
+                .load_texture_from_image(thread, &self.color_buffer)
+                .ok();
         }
+
+        let Some(texture) = &mut self.gpu else {
+            return;
+        };
+        if texture.update_texture(&self.pixels).is_err() {
+            return;
+        }
+
+        let mut d = window.begin_drawing(thread);
+        d.clear_background(Color::BLACK);
+        d.draw_texture(texture, 0, 0, Color::WHITE);
+        hud(&mut d);
     }
 
     fn upload(&mut self) {

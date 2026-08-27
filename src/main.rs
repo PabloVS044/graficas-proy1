@@ -15,8 +15,8 @@ use player::Player;
 use sprites::Enemy;
 use textures::{TextureManager, asset_path};
 
-const WINDOW_WIDTH: i32 = 800;
-const WINDOW_HEIGHT: i32 = 600;
+const WINDOW_WIDTH: i32 = 1280;
+const WINDOW_HEIGHT: i32 = 720;
 
 const MAX_FRAME_TIME: f32 = 0.1;
 
@@ -349,6 +349,21 @@ fn main() {
     }
 }
 
+/// Una posición vertical dada como fracción del alto de la ventana.
+///
+/// Las pantallas se colocan así y no en píxeles fijos: los valores estaban
+/// calculados a ojo para 600 px de alto y se apelotonaban arriba al agrandar la
+/// ventana. En fracciones, el layout sobrevive a cualquier resolución.
+fn y_frac(fraction: f32) -> i32 {
+    (WINDOW_HEIGHT as f32 * fraction) as i32
+}
+
+/// Tamaño de fuente proporcional al alto de la ventana, para que el texto no
+/// encoja en pantallas grandes.
+fn font(size: f32) -> i32 {
+    ((WINDOW_HEIGHT as f32 / 600.0) * size) as i32
+}
+
 fn draw_menu(
     d: &mut RaylibDrawHandle,
     background: Option<&Texture2D>,
@@ -362,33 +377,33 @@ fn draw_menu(
 
     d.draw_rectangle(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, Color::new(0, 0, 0, 130));
 
-    draw_centered_text(d, TITLE, 190, 40, Color::WHITESMOKE);
+    draw_centered_text(d, TITLE, y_frac(0.32), font(40.0), Color::WHITESMOKE);
 
     let blink = (time * 3.0).sin() * 0.5 + 0.5;
     let alpha = (150.0 + 105.0 * blink) as u8;
     draw_centered_text(
         d,
         "elegi un nivel",
-        255,
-        20,
+        y_frac(0.42),
+        font(20.0),
         Color::new(0xE8, 0xC0, 0x50, alpha),
     );
 
     let names: Vec<&str> = LEVELS.iter().map(|(name, _)| *name).collect();
-    draw_option_list(d, &names, choice, 295, 40);
+    draw_option_list(d, &names, choice, y_frac(0.49), font(40.0));
 
     let confirm = match pad {
         Some(_) => "flechas o cruceta para elegir  |  ENTER o (A) para jugar",
         None => "flechas para elegir  |  ENTER para jugar",
     };
-    draw_centered_text(d, confirm, 435, 18, Color::LIGHTGRAY);
+    draw_centered_text(d, confirm, y_frac(0.72), font(18.0), Color::LIGHTGRAY);
 
     let controls = match pad {
         Some(_) => "WASD + mouse  o  sticks del mando  |  TAB cursor  |  M minimapa  |  N musica",
         None => "WASD + mouse  |  TAB cursor  |  M minimapa  |  N musica",
     };
-    draw_centered_text(d, controls, 462, 16, Color::GRAY);
-    draw_centered_text(d, "ESC para salir", 486, 16, Color::GRAY);
+    draw_centered_text(d, controls, y_frac(0.77), font(16.0), Color::GRAY);
+    draw_centered_text(d, "ESC para salir", y_frac(0.81), font(16.0), Color::GRAY);
 
     if let Some(name) = pad {
         draw_centered_text(
@@ -461,7 +476,13 @@ fn draw_option_list(
 fn draw_victory(d: &mut RaylibDrawHandle, choice: usize, run_time: f32, pad: Option<&str>) {
     d.draw_rectangle(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, Color::new(0, 0, 0, 160));
 
-    draw_centered_text(d, "GANASTE!", 140, 56, Color::new(0x5E, 0xD9, 0x8A, 255));
+    draw_centered_text(
+        d,
+        "GANASTE!",
+        y_frac(0.23),
+        font(56.0),
+        Color::new(0x5E, 0xD9, 0x8A, 255),
+    );
     draw_centered_text(
         d,
         &format!("llegaste a la meta en {run_time:.1} s"),
@@ -470,14 +491,14 @@ fn draw_victory(d: &mut RaylibDrawHandle, choice: usize, run_time: f32, pad: Opt
         Color::LIGHTGRAY,
     );
 
-    draw_option_list(d, &VICTORY_OPTIONS, choice, 285, 42);
+    draw_option_list(d, &VICTORY_OPTIONS, choice, y_frac(0.47), font(42.0));
 
     let hint = match pad {
         Some(_) => "flechas o cruceta para elegir  |  ENTER o (A) para confirmar",
         None => "flechas para elegir  |  ENTER para confirmar",
     };
-    draw_centered_text(d, hint, 440, 18, Color::LIGHTGRAY);
-    draw_centered_text(d, "ESC para salir", 470, 18, Color::GRAY);
+    draw_centered_text(d, hint, y_frac(0.73), font(18.0), Color::LIGHTGRAY);
+    draw_centered_text(d, "ESC para salir", y_frac(0.78), font(18.0), Color::GRAY);
 }
 
 fn draw_background_cover(d: &mut RaylibDrawHandle, texture: &Texture2D) {
@@ -570,7 +591,7 @@ fn draw_hud(
         &format!("{input}  |  TAB: cursor  |  M: minimapa  |  N: musica  |  {fps} FPS"),
         10,
         10,
-        18,
+        font(18.0),
         Color::WHITESMOKE,
     );
 
