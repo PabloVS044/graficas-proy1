@@ -23,7 +23,7 @@ impl Player {
 /// cambia con el nivel y con el tamaño de la ventana, así que una velocidad en
 /// píxeles haría que el mismo juego se sintiera más rápido en los mapas grandes
 /// y más lento al agrandar la ventana.
-const MOVE_SPEED: f32 = 5.0;
+pub const MOVE_SPEED: f32 = 5.0;
 const ROTATION_SPEED: f32 = PI;
 
 #[derive(Default, Clone, Copy)]
@@ -32,6 +32,10 @@ pub struct Intent {
     pub strafe: f32,
     pub turn: f32,
     pub look_dx: f32,
+    /// Acciones de este frame. Son flancos (se activan una vez por pulsación),
+    /// no estados sostenidos, así que combinarlas es un OR.
+    pub shoot: bool,
+    pub reload: bool,
 }
 
 impl Intent {
@@ -41,6 +45,8 @@ impl Intent {
             strafe: (self.strafe + other.strafe).clamp(-1.0, 1.0),
             turn: (self.turn + other.turn).clamp(-1.0, 1.0),
             look_dx: self.look_dx + other.look_dx,
+            shoot: self.shoot || other.shoot,
+            reload: self.reload || other.reload,
         }
     }
 }
@@ -86,6 +92,10 @@ pub fn keyboard_intent(window: &RaylibHandle, mouse_dx: f32) -> Intent {
         intent.strafe -= 1.0;
     }
 
+    intent.shoot = window.is_mouse_button_pressed(MouseButton::MOUSE_BUTTON_LEFT)
+        || window.is_key_pressed(KeyboardKey::KEY_LEFT_CONTROL);
+    intent.reload = window.is_key_pressed(KeyboardKey::KEY_R);
+
     intent
 }
 
@@ -114,28 +124,44 @@ pub fn apply_intent(
 }
 
 fn try_move(player: &mut Player, dx: f32, dy: f32, maze: &Maze, block_size: usize) -> bool {
+    slide(&mut player.pos, dx, dy, maze, block_size, COLLISION_RADIUS)
+}
+
+/// Mueve `pos` un eje a la vez, para que chocar en diagonal siga dejando avanzar
+/// sobre el eje libre. Devuelve si algún eje quedó bloqueado.
+///
+/// Lo usan el jugador y los enemigos con radios distintos: sin esto, la IA
+/// necesitaría su propia copia de la colisión y las dos se irían separando.
+pub fn slide(
+    pos: &mut Vector2,
+    dx: f32,
+    dy: f32,
+    maze: &Maze,
+    block_size: usize,
+    radius: f32,
+) -> bool {
     let mut blocked = false;
 
-    let next_x = player.pos.x + dx;
-    if collides(next_x, player.pos.y, maze, block_size) {
+    let next_x = pos.x + dx;
+    if collides(next_x, pos.y, maze, block_size, radius) {
         blocked = true;
     } else {
-        player.pos.x = next_x;
+        pos.x = next_x;
     }
 
-    let next_y = player.pos.y + dy;
-    if collides(player.pos.x, next_y, maze, block_size) {
+    let next_y = pos.y + dy;
+    if collides(pos.x, next_y, maze, block_size, radius) {
         blocked = true;
     } else {
-        player.pos.y = next_y;
+        pos.y = next_y;
     }
 
     blocked
 }
 
-fn collides(x: f32, y: f32, maze: &Maze, block_size: usize) -> bool {
-    const R: f32 = COLLISION_RADIUS;
-    [(-R, -R), (R, -R), (-R, R), (R, R)]
+fn collides(x: f32, y: f32, maze: &Maze, block_size: usize, radius: f32) -> bool {
+    let r = radius;
+    [(-r, -r), (r, -r), (-r, r), (r, r)]
         .iter()
         .any(|(ox, oy)| maze.is_wall_at_pixel(x + ox, y + oy, block_size))
 }
@@ -171,7 +197,7 @@ mod tests {
             forward: 1.0,
             strafe: 1.0,
             turn: 1.0,
-            look_dx: 0.0,
+            ..Intent::default()
         };
         let pad = keyboard;
         let both = keyboard.merge(pad);
@@ -204,6 +230,19 @@ mod tests {
             ..Intent::default()
         };
         assert_eq!(a.merge(b).look_dx, 70.0);
+    }
+
+    #[test]
+    fn las_acciones_se_combinan_con_or() {
+        // Disparar desde el mando mientras el teclado no dispara tiene que
+        // disparar igual: son flancos, no ejes.
+        let teclado = Intent::default();
+        let mando = Intent {
+            shoot: true,
+            ..Intent::default()
+        };
+        assert!(teclado.merge(mando).shoot);
+        assert!(!teclado.merge(Intent::default()).shoot);
     }
 
     #[test]

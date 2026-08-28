@@ -44,6 +44,10 @@ pub fn intent(window: &RaylibHandle) -> Intent {
         strafe: strafe.clamp(-1.0, 1.0),
         turn,
         look_dx: 0.0,
+        // Gatillo derecho dispara, X recarga.
+        shoot: window.is_gamepad_button_pressed(PAD, GamepadButton::GAMEPAD_BUTTON_RIGHT_TRIGGER_2),
+        reload: window
+            .is_gamepad_button_pressed(PAD, GamepadButton::GAMEPAD_BUTTON_RIGHT_FACE_LEFT),
     }
 }
 

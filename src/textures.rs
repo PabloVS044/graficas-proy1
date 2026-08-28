@@ -8,7 +8,11 @@ const TEXTURE_FILES: [(char, &[&str]); 5] = [
     ('+', &["assets/pared2.png", "assets/pared.png"]),
     ('-', &["assets/pared.png"]),
     ('|', &["assets/pared3.png", "assets/pared.png"]),
-    ('g', &["assets/goal.png", "assets/meta.png"]),
+    // La salida se dibuja como sprite, así que conviene con canal alpha.
+    (
+        'g',
+        &["assets/salida.png", "assets/goal.png", "assets/meta.png"],
+    ),
     ('e', &["assets/enemigo.png"]),
 ];
 

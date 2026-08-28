@@ -33,6 +33,9 @@ cargo run --release -- --screenshot --level 3   # otro nivel
 | A / D | moverse de costado sin girar (strafe) |
 | ← / → | rotar, alternativa al mouse |
 | ↑ / ↓ | avanzar / retroceder, alias de W/S |
+| click izq / Ctrl | disparar |
+| gatillo derecho | disparar, con el mando |
+| R / (X) | recargar |
 | TAB   | soltar / recapturar el cursor |
 | M     | mostrar / ocultar el minimapa |
 | N     | silenciar / reanudar la música |
@@ -58,8 +61,9 @@ Centrar al capturar (`capture_cursor`) tampoco es cosmético: como el movimiento
 contra el centro, arrancar o volver de `TAB` con el puntero en otro lado se leería como un
 movimiento gigante y la cámara pegaría un salto.
 
-El jugador arranca en la celda `p` y gana al llegar a la `g`, que abre la pantalla de
-victoria con el tiempo de la partida. Hay colisión con paredes, con deslizamiento: al
+El jugador arranca en la celda `p` y gana llegando a la `g`, que abre la pantalla de
+victoria con el tiempo de la partida. Matar enemigos es opcional, pero **tocar a uno mata**,
+y ahí aparece la pantalla de derrota. Hay colisión con paredes, con deslizamiento: al
 chocar en diagonal se sigue avanzando sobre el eje que sí está libre.
 
 ## Estructura
@@ -67,15 +71,16 @@ chocar en diagonal se sigue avanzando sobre el eje que sí está libre.
 | Archivo | Contenido |
 |---------|-----------|
 | `maze.txt`, `maze2.txt`, `maze3.txt` | los tres niveles: `+ - \|` paredes, ` ` piso, `p` spawn, `g` meta, `e` enemigo |
-| `assets/` | texturas y fondo del menú (PNG), y los sonidos (OGG) |
+| `assets/` | texturas, sprites y fondo del menú (PNG), y los sonidos (OGG) |
 | `src/maze.rs` | tipo `Maze` (grid de chars + dimensiones), carga del archivo, `is_wall`, búsqueda de `p`/`g`/`e` |
 | `src/player.rs` | `Player { pos, a, fov }`, el `Intent` de entrada y `apply_intent` (movimiento + colisión) |
 | `src/caster.rs` | `Intersect { distance, impact, tx, side }` y `cast_ray` |
 | `src/textures.rs` | `TextureManager`: mantiene las imágenes en memoria y devuelve pixeles sueltos |
 | `src/render.rs` | `render_world` (3D con stakes texturizadas, devuelve el z-buffer) y `render_minimap` |
-| `src/sprites.rs` | `Enemy` y `render_enemies` (billboarding + z-buffer) |
+| `src/sprites.rs` | `Enemy`, la proyección compartida y `render_sprites` (billboarding + z-buffer) |
 | `src/framebuffer.rs` | buffer de pixeles en CPU, se sube a la GPU una vez por frame |
 | `src/gamepad.rs` | lectura del mando: sticks con zona muerta, cruceta y botones |
+| `src/combat.rs` | vida y munición del jugador, resolución del disparo y daño por contacto |
 | `src/main.rs` | ventana, main loop, máquina de pantallas, HUD y menús |
 
 Origen del framebuffer: **arriba-izquierda**, x a la derecha y y hacia abajo, para
@@ -135,10 +140,8 @@ central del render es el rayo lanzado a exactamente `player.a` (con
 stake se dibuja centrada en el horizonte `hh`. El centro de la ventana ya *es* el
 punto al que apunta el jugador.
 
-Pendiente para cuando haya con qué interactuar (puertas, enemigos, disparar): ese
-rayo central ya trae su `Intersect` calculado dentro del loop de `render_world`,
-así que guardarlo en lugar de descartarlo da distancia y tipo de pared apuntada
-gratis, y con eso el crosshair puede volverse contextual.
+Esa propiedad es la que usa el disparo: como el centro de la ventana *es* el punto al que
+apunta el jugador, acertar se reduce a preguntar qué sprite cubre esa columna.
 
 ## La ecuación de `stake_height`
 
@@ -304,6 +307,34 @@ continúan el arte en lugar de aproximarlo.
 Se probó también una versión más apagada, pensando que un piso claro le comería
 protagonismo a las paredes; el resultado fue peor: la arena desaturada se lee como barro
 gris y rompe justo lo que se buscaba.
+
+## El combate
+
+El nivel se gana llegando a la salida. Matar enemigos es **opcional**: cada uno aguanta
+tres impactos, pero nadie obliga a limpiar el mapa.
+
+Lo que los hace peligrosos es que **tocar a uno mata de una**. Son estatuas venenosas: no
+persiguen ni se mueven, así que el riesgo está enteramente en cómo el jugador se mueve
+alrededor de ellos. Ese es el intercambio: al no ser obligatorio matarlos, hacer poco daño
+los volvía decorado, y matar de un toque les devuelve el peso sin necesidad de IA.
+
+**La puntería no se calcula aparte del dibujo.** `sprites::project` devuelve dónde cae un
+sprite en la pantalla, y la usan las dos cosas: `render_sprites` para pintarlo y
+`combat::shoot` para decidir a quién le pegó. Un disparo acierta si la **columna central**
+—donde está el crosshair— cae dentro del sprite, y si `zbuffer[centro]` dice que la pared
+de esa columna está más lejos que el enemigo. Así "le apunto y le pego" es literal: si dos
+cálculos separados se desincronizaran, el jugador vería una cosa y el juego resolvería otra.
+
+El disparo se resuelve contra el z-buffer **del frame anterior**. En 16 ms la escena no
+cambió lo suficiente como para que importe, y evita rayescanear una segunda vez solo para
+saber si hay una pared en medio.
+
+Sin movimiento tampoco hace falta línea de vista: estar tocando a uno ya implica que no hay
+pared en medio.
+
+La **munición tiene cargador pero reserva infinita**, a propósito: con reserva finita el
+jugador puede quedarse sin balas y sin forma de abrir la salida, o sea con el nivel
+imposible y sin que nada se lo explique.
 
 ## Los sprites y el piso
 

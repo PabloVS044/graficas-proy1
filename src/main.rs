@@ -1,4 +1,5 @@
 mod caster;
+mod combat;
 mod framebuffer;
 mod gamepad;
 mod maze;
@@ -9,10 +10,11 @@ mod textures;
 
 use raylib::prelude::*;
 
+use combat::{Combat, ShotResult};
 use framebuffer::Framebuffer;
 use maze::{ENEMY, GOAL, Maze, SPAWN};
 use player::Player;
-use sprites::Enemy;
+use sprites::{DrawItem, Enemy};
 use textures::{TextureManager, asset_path};
 
 const WINDOW_WIDTH: i32 = 1280;
@@ -32,11 +34,27 @@ const MUSIC_VOLUME: f32 = 0.35;
 
 const WALKING_EPSILON: f32 = 0.05;
 
+/// Efectos one-shot. Cada uno con su lista de candidatos: si no está el archivo,
+/// esa acción simplemente no suena.
+const SHOT_SOUNDS: [&str; 2] = ["assets/disparo.ogg", "assets/disparo.wav"];
+const DEATH_SOUNDS: [&str; 2] = ["assets/muerte.ogg", "assets/muerte.wav"];
+const IMPACT_SOUNDS: [&str; 2] = ["assets/impacto.ogg", "assets/impacto.wav"];
+const RELOAD_SOUNDS: [&str; 2] = ["assets/recarga.ogg", "assets/recarga.wav"];
+const HURT_SOUNDS: [&str; 2] = ["assets/dolor.ogg", "assets/dolor.wav"];
+
+/// Arma en pantalla. El segundo es el frame del fogonazo y es opcional.
+const WEAPON_IDLE: [&str; 2] = ["assets/arma.png", "assets/pistola.png"];
+const WEAPON_FIRE: [&str; 2] = ["assets/arma_disparo.png", "assets/pistola_disparo.png"];
+
+/// Char con el que se dibuja la salida como sprite.
+const EXIT_KIND: char = GOAL;
+
 #[derive(PartialEq)]
 enum Screen {
     Menu,
     Playing,
     Victory,
+    GameOver,
 }
 
 const LEVELS: [(&str, &str); 3] = [
@@ -53,6 +71,10 @@ const VICTORY_OPTIONS: [&str; 3] = [
 const OPTION_FREEROAM: usize = 0;
 const OPTION_RESTART: usize = 1;
 const OPTION_MENU: usize = 2;
+
+/// Qué se ofrece al morir. Sin "seguir explorando", claro.
+const GAMEOVER_OPTIONS: [&str; 2] = ["Reintentar", "Elegir otro nivel"];
+const OVER_RETRY: usize = 0;
 
 struct Level {
     maze: Maze,
@@ -78,10 +100,7 @@ fn load_level(file: &str) -> Level {
     let enemies: Vec<Enemy> = maze
         .find_all(ENEMY)
         .into_iter()
-        .map(|(i, j)| Enemy {
-            pos: maze.cell_center(i, j, block_size),
-            kind: ENEMY,
-        })
+        .map(|(i, j)| Enemy::new(maze.cell_center(i, j, block_size), ENEMY))
         .collect();
 
     Level {
@@ -91,6 +110,36 @@ fn load_level(file: &str) -> Level {
         goal,
         enemies,
     }
+}
+
+/// Arma la lista de billboards del frame: los enemigos vivos, con parpadeo si
+/// acaban de recibir un tiro, y la salida.
+///
+/// Matar a los enemigos es opcional, así que la salida se dibuja tal cual, sin
+/// nada que señale si está abierta.
+fn build_sprites(level: &Level) -> Vec<DrawItem> {
+    let mut items: Vec<DrawItem> = level
+        .enemies
+        .iter()
+        .filter(|e| e.alive())
+        .map(|e| DrawItem {
+            pos: e.pos,
+            kind: e.kind,
+            tint: (e.hit_flash > 0.0).then_some(Color::WHITE),
+        })
+        .collect();
+
+    if let Some((gi, gj)) = level.goal {
+        items.push(DrawItem {
+            pos: level.maze.cell_center(gi, gj, level.block_size),
+            kind: EXIT_KIND,
+            // Sin tinte: la salida tiene su propia imagen y ya no hay estado
+            // "bloqueada" que señalar.
+            tint: None,
+        });
+    }
+
+    items
 }
 
 fn main() {
@@ -131,10 +180,17 @@ fn main() {
         eprintln!("aviso: sin fondo de menú (se buscó {MENU_BACKGROUNDS:?}); queda en negro");
     }
 
+    let weapon_idle = load_first_texture(&mut window, &thread, &WEAPON_IDLE);
+    let weapon_fire = load_first_texture(&mut window, &thread, &WEAPON_FIRE);
+    if weapon_idle.is_none() {
+        eprintln!("aviso: sin arma en pantalla (se buscó {WEAPON_IDLE:?})");
+    }
+
     if std::env::args().any(|arg| arg == "--screenshot") {
         let menu_shot = std::env::args().any(|arg| arg == "--menu");
         let victory_shot = std::env::args().any(|arg| arg == "--victory");
         let pad_name = gamepad::name(&window);
+        let shot_remaining = combat::remaining(&level.enemies);
         framebuffer.clear();
         let zbuffer = render::render_world(
             &mut framebuffer,
@@ -143,10 +199,11 @@ fn main() {
             &texture_manager,
             level.block_size,
         );
-        sprites::render_enemies(
+        let items = build_sprites(&level);
+        sprites::render_sprites(
             &mut framebuffer,
             &player,
-            &level.enemies,
+            &items,
             &texture_manager,
             &zbuffer,
             level.block_size,
@@ -166,7 +223,23 @@ fn main() {
             } else if victory_shot {
                 draw_victory(d, OPTION_FREEROAM, 42.7, pad_name.as_deref());
             } else {
-                draw_hud(d, 0, false, true, pad_name.as_deref());
+                draw_weapon(
+                    d,
+                    weapon_idle.as_ref(),
+                    weapon_fire.as_ref(),
+                    &Combat::default(),
+                    false,
+                    0.0,
+                );
+                draw_hud(
+                    d,
+                    0,
+                    false,
+                    true,
+                    pad_name.as_deref(),
+                    &Combat::default(),
+                    shot_remaining,
+                );
             }
         });
         window.take_screenshot(&thread, "screenshot.png");
@@ -191,6 +264,28 @@ fn main() {
     let mut steps_started = false;
     let mut steps_playing = false;
 
+    let shot_sound = audio
+        .as_ref()
+        .and_then(|d| load_sound(d, &SHOT_SOUNDS, "disparo"));
+    let death_sound = audio
+        .as_ref()
+        .and_then(|d| load_sound(d, &DEATH_SOUNDS, "muerte"));
+    let impact_sound = audio
+        .as_ref()
+        .and_then(|d| load_sound(d, &IMPACT_SOUNDS, "impacto"));
+    let reload_sound = audio
+        .as_ref()
+        .and_then(|d| load_sound(d, &RELOAD_SOUNDS, "recarga"));
+    let hurt_sound = audio
+        .as_ref()
+        .and_then(|d| load_sound(d, &HURT_SOUNDS, "dolor"));
+
+    let mut combat = Combat::default();
+    let mut gameover_choice = OVER_RETRY;
+    // El z-buffer del último frame dibujado, que es contra lo que se resuelve el
+    // disparo: el tiro sale en el mismo instante en que el jugador ve la escena.
+    let mut last_zbuffer: Vec<f32> = vec![f32::INFINITY; WINDOW_WIDTH as usize];
+
     let mut screen = Screen::Menu;
     let mut mouse_look = true;
 
@@ -209,6 +304,7 @@ fn main() {
                 if confirm_pressed(&window) {
                     level = load_level(LEVELS[level_choice].1);
                     player = Player::new(level.spawn);
+                    combat = Combat::default();
                     freeroam = false;
                     screen = Screen::Playing;
                     capture_cursor(&mut window);
@@ -236,6 +332,57 @@ fn main() {
                 player::apply_intent(&mut player, intent, &level.maze, level.block_size, dt);
                 walking = player.pos.distance(was_at) > WALKING_EPSILON;
 
+                combat.tick(dt);
+
+                if intent.reload && combat.start_reload() {
+                    play(&reload_sound);
+                }
+
+                if intent.shoot {
+                    // El z-buffer del frame anterior: la geometría no cambió lo
+                    // suficiente en 16 ms como para que importe, y evita tener que
+                    // rayescanear de nuevo solo para disparar.
+                    let aspect = texture_manager
+                        .size(ENEMY)
+                        .map_or(1.0, |(w, h)| w as f32 / h as f32);
+                    match combat::shoot(
+                        &mut combat,
+                        &player,
+                        &mut level.enemies,
+                        &last_zbuffer,
+                        Vector2::new(WINDOW_WIDTH as f32, WINDOW_HEIGHT as f32),
+                        level.block_size,
+                        aspect,
+                    ) {
+                        ShotResult::Blocked => {}
+                        ShotResult::Missed => play(&shot_sound),
+                        ShotResult::Hit { killed } => {
+                            play(&shot_sound);
+                            if killed {
+                                play(&death_sound);
+                            } else {
+                                play(&impact_sound);
+                            }
+                        }
+                    }
+                }
+
+                if combat::update_enemies(
+                    &mut level.enemies,
+                    &player,
+                    &mut combat,
+                    level.block_size,
+                    dt,
+                ) {
+                    play(&hurt_sound);
+                }
+
+                if !combat.alive() {
+                    screen = Screen::GameOver;
+                    gameover_choice = OVER_RETRY;
+                    release_cursor(&mut window);
+                }
+
                 let on_goal =
                     level.goal == Some(level.maze.cell_at_pixel(player.pos, level.block_size));
                 if on_goal && !freeroam {
@@ -243,6 +390,27 @@ fn main() {
                     run_time = (window.get_time() - run_started) as f32;
                     victory_choice = OPTION_FREEROAM;
                     release_cursor(&mut window);
+                }
+            }
+            Screen::GameOver => {
+                let step = menu_step(&window, &mut pad_menu_rested);
+                if step != 0 {
+                    gameover_choice = wrap_choice(gameover_choice, step, GAMEOVER_OPTIONS.len());
+                }
+
+                if confirm_pressed(&window) {
+                    if gameover_choice == OVER_RETRY {
+                        level = load_level(LEVELS[level_choice].1);
+                        player = Player::new(level.spawn);
+                        combat = Combat::default();
+                        freeroam = false;
+                        run_started = window.get_time();
+                        screen = Screen::Playing;
+                        capture_cursor(&mut window);
+                        mouse_look = true;
+                    } else {
+                        screen = Screen::Menu;
+                    }
                 }
             }
             Screen::Victory => {
@@ -254,7 +422,9 @@ fn main() {
                 if confirm_pressed(&window) {
                     match victory_choice {
                         OPTION_RESTART => {
+                            level = load_level(LEVELS[level_choice].1);
                             player = Player::new(level.spawn);
+                            combat = Combat::default();
                             freeroam = false;
                             run_started = window.get_time();
                             screen = Screen::Playing;
@@ -312,14 +482,16 @@ fn main() {
                 &texture_manager,
                 level.block_size,
             );
-            sprites::render_enemies(
+            let items = build_sprites(&level);
+            sprites::render_sprites(
                 &mut framebuffer,
                 &player,
-                &level.enemies,
+                &items,
                 &texture_manager,
                 &zbuffer,
                 level.block_size,
             );
+            last_zbuffer = zbuffer;
             if show_minimap && screen == Screen::Playing {
                 render::render_minimap(
                     &mut framebuffer,
@@ -334,6 +506,7 @@ fn main() {
         let fps = window.get_fps();
         let time = window.get_time() as f32;
         let pad = gamepad::name(&window);
+        let remaining = combat::remaining(&level.enemies);
 
         framebuffer.swap_buffers(&mut window, &thread, |d| match screen {
             Screen::Menu => draw_menu(
@@ -343,8 +516,27 @@ fn main() {
                 level_choice,
                 pad.as_deref(),
             ),
-            Screen::Playing => draw_hud(d, fps, freeroam, mouse_look, pad.as_deref()),
+            Screen::Playing => {
+                draw_weapon(
+                    d,
+                    weapon_idle.as_ref(),
+                    weapon_fire.as_ref(),
+                    &combat,
+                    walking,
+                    time,
+                );
+                draw_hud(
+                    d,
+                    fps,
+                    freeroam,
+                    mouse_look,
+                    pad.as_deref(),
+                    &combat,
+                    remaining,
+                );
+            }
             Screen::Victory => draw_victory(d, victory_choice, run_time, pad.as_deref()),
+            Screen::GameOver => draw_gameover(d, gameover_choice, pad.as_deref()),
         });
     }
 }
@@ -528,6 +720,49 @@ fn draw_centered_text(d: &mut RaylibDrawHandle, text: &str, y: i32, size: i32, c
     d.draw_text(text, x, y, size, color);
 }
 
+/// Carga un efecto corto: `Sound` y no `Music` porque estos se disparan y se
+/// olvidan, y varios pueden solaparse.
+/// Primera textura de GPU que exista de la lista. Mismo criterio de candidatos
+/// que las texturas del mundo y el fondo del menú.
+fn load_first_texture(
+    window: &mut RaylibHandle,
+    thread: &RaylibThread,
+    candidates: &[&str],
+) -> Option<Texture2D> {
+    candidates.iter().find_map(|path| {
+        let full = asset_path(path);
+        full.exists()
+            .then(|| {
+                window
+                    .load_texture(thread, full.to_str().unwrap_or(path))
+                    .ok()
+            })
+            .flatten()
+    })
+}
+
+fn load_sound<'a>(device: &'a RaylibAudio, candidates: &[&str], what: &str) -> Option<Sound<'a>> {
+    for path in candidates {
+        let full = asset_path(path);
+        if !full.exists() {
+            continue;
+        }
+        match device.new_sound(full.to_str().unwrap_or(path)) {
+            Ok(sound) => return Some(sound),
+            Err(e) => eprintln!("aviso: no se pudo cargar '{path}' ({e})"),
+        }
+    }
+    eprintln!("aviso: sin sonido de {what} (se buscó {candidates:?})");
+    None
+}
+
+/// Reproduce si el efecto existe. Sin archivo, silencio y a otra cosa.
+fn play(sound: &Option<Sound<'_>>) {
+    if let Some(s) = sound {
+        s.play();
+    }
+}
+
 fn load_loop<'a>(
     device: &'a RaylibAudio,
     candidates: &[&str],
@@ -576,13 +811,161 @@ fn read_mouse_look(window: &mut RaylibHandle, mouse_look: bool) -> f32 {
     dx
 }
 
+/// Barra de vida, munición y enemigos restantes, abajo a la izquierda.
+fn draw_status(d: &mut RaylibDrawHandle, combat: &Combat, remaining: usize) {
+    let margin = 16;
+    let bar_w = 220;
+    let bar_h = font(16.0);
+    let y = WINDOW_HEIGHT - margin - bar_h;
+
+    let ratio = combat.health as f32 / combat::MAX_HEALTH as f32;
+    d.draw_rectangle(
+        margin - 2,
+        y - 2,
+        bar_w + 4,
+        bar_h + 4,
+        Color::new(0, 0, 0, 160),
+    );
+    d.draw_rectangle(margin, y, bar_w, bar_h, Color::new(0x3A, 0x1E, 0x1E, 255));
+    d.draw_rectangle(
+        margin,
+        y,
+        (bar_w as f32 * ratio) as i32,
+        bar_h,
+        // El color acompaña la urgencia: verde con vida, rojo cuando queda poca.
+        if ratio > 0.5 {
+            Color::new(0x5E, 0xD9, 0x8A, 255)
+        } else if ratio > 0.25 {
+            Color::new(0xE8, 0xC0, 0x50, 255)
+        } else {
+            Color::new(0xD9, 0x4A, 0x4A, 255)
+        },
+    );
+    d.draw_text(
+        &format!("{} HP", combat.health),
+        margin + 6,
+        y,
+        bar_h,
+        Color::WHITESMOKE,
+    );
+
+    let ammo = if combat.reloading() {
+        "recargando...".to_string()
+    } else {
+        format!("{} / {}", combat.ammo, combat::MAG_SIZE)
+    };
+    let ammo_y = y - font(30.0);
+    d.draw_text(&ammo, margin, ammo_y, font(26.0), Color::WHITESMOKE);
+
+    // Contador informativo: matarlos suma, pero no hace falta para salir.
+    let (texto, color) = if remaining == 0 {
+        (
+            "nivel limpio".to_string(),
+            Color::new(0x5E, 0xD9, 0x8A, 255),
+        )
+    } else {
+        (
+            format!("enemigos: {remaining}"),
+            Color::new(0xE8, 0xC0, 0x50, 255),
+        )
+    };
+    d.draw_text(&texto, margin, ammo_y - font(24.0), font(20.0), color);
+}
+
+/// El arma en primera persona.
+///
+/// Va dentro del closure del HUD, o sea en coordenadas de ventana y encima del
+/// framebuffer, igual que el crosshair.
+fn draw_weapon(
+    d: &mut RaylibDrawHandle,
+    idle: Option<&Texture2D>,
+    fire: Option<&Texture2D>,
+    combat: &Combat,
+    walking: bool,
+    time: f32,
+) {
+    // Mientras dura el fogonazo se muestra el otro frame, si existe.
+    let firing = combat.shot_timer > combat::FIRE_COOLDOWN * 0.6;
+    let Some(texture) = (if firing { fire.or(idle) } else { idle }) else {
+        return;
+    };
+
+    // El sprite es apaisado, así que la escala se mide contra el alto: al 45%
+    // ocupaba media pantalla y el cañón tapaba el crosshair.
+    let scale = WINDOW_HEIGHT as f32 * 0.34 / texture.height as f32;
+    let w = texture.width as f32 * scale;
+    let h = texture.height as f32 * scale;
+
+    // Bobbing al caminar: un arma perfectamente quieta parece una calcomanía
+    // pegada a la pantalla.
+    let bob = if walking {
+        (time * 9.0).sin() * 6.0
+    } else {
+        0.0
+    };
+    // Retroceso: salta y vuelve durante la cadencia del disparo.
+    let recoil = (combat.shot_timer / combat::FIRE_COOLDOWN) * 18.0;
+
+    d.draw_texture_pro(
+        texture,
+        Rectangle::new(0.0, 0.0, texture.width as f32, texture.height as f32),
+        Rectangle::new(
+            // Corrida a la derecha y hundida abajo: el cañón apunta arriba a la
+            // izquierda, así que así queda apuntando al centro sin taparlo.
+            WINDOW_WIDTH as f32 * 0.66 - w / 2.0,
+            WINDOW_HEIGHT as f32 - h * 0.86 + recoil + bob,
+            w,
+            h,
+        ),
+        Vector2::zero(),
+        0.0,
+        Color::WHITE,
+    );
+}
+
+/// La pantalla de derrota, sobre el último frame del nivel.
+fn draw_gameover(d: &mut RaylibDrawHandle, choice: usize, pad: Option<&str>) {
+    d.draw_rectangle(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT, Color::new(40, 0, 0, 170));
+    draw_centered_text(
+        d,
+        "TE MATARON",
+        y_frac(0.25),
+        font(56.0),
+        Color::new(0xD9, 0x4A, 0x4A, 255),
+    );
+    draw_option_list(d, &GAMEOVER_OPTIONS, choice, y_frac(0.48), font(42.0));
+
+    let hint = match pad {
+        Some(_) => "flechas o cruceta para elegir  |  ENTER o (A) para confirmar",
+        None => "flechas para elegir  |  ENTER para confirmar",
+    };
+    draw_centered_text(d, hint, y_frac(0.72), font(18.0), Color::LIGHTGRAY);
+}
+
 fn draw_hud(
     d: &mut RaylibDrawHandle,
     fps: u32,
     freeroam: bool,
     mouse_look: bool,
     pad: Option<&str>,
+    combat: &Combat,
+    remaining: usize,
 ) {
+    // Destello rojo al recibir daño: sin esto, perder vida no se siente, solo se
+    // lee en un número.
+    if combat.hurt_flash > 0.0 {
+        let alpha = (combat.hurt_flash / 0.35 * 120.0) as u8;
+        d.draw_rectangle(
+            0,
+            0,
+            WINDOW_WIDTH,
+            WINDOW_HEIGHT,
+            Color::new(200, 0, 0, alpha),
+        );
+    }
+
+    draw_status(d, combat, remaining);
+
     let input = match pad {
         Some(_) => "mando + WASD",
         None => "WASD + mouse",
