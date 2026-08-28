@@ -7,6 +7,12 @@ en Fondo de Bikini.
 El objetivo de cada nivel es llegar a la salida. En el camino hay enemigos estáticos: se
 pueden eliminar, pero no es obligatorio; entrar en contacto con uno provoca una derrota.
 
+## Video de demostración
+
+[![Ver gameplay en YouTube](https://img.youtube.com/vi/FJGRuNkv-3I/hqdefault.jpg)](https://youtu.be/FJGRuNkv-3I)
+
+[Ver el gameplay en YouTube](https://youtu.be/FJGRuNkv-3I)
+
 ## Características
 
 - Raycasting con paredes texturizadas, corrección de ojo de pez y sombreado por distancia.
