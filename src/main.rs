@@ -22,7 +22,7 @@ const WINDOW_HEIGHT: i32 = 720;
 
 const MAX_FRAME_TIME: f32 = 0.1;
 
-const TITLE: &str = "PROYECTO 1 - RAYCASTER";
+const TITLE: &str = "BOB ESPONJA CON PISTOLA";
 
 const MENU_BACKGROUNDS: [&str; 2] = ["assets/menu.png", "assets/pared2.png"];
 
@@ -41,6 +41,19 @@ const DEATH_SOUNDS: [&str; 2] = ["assets/muerte.ogg", "assets/muerte.wav"];
 const IMPACT_SOUNDS: [&str; 2] = ["assets/impacto.ogg", "assets/impacto.wav"];
 const RELOAD_SOUNDS: [&str; 2] = ["assets/recarga.ogg", "assets/recarga.wav"];
 const HURT_SOUNDS: [&str; 2] = ["assets/dolor.ogg", "assets/dolor.wav"];
+/// El clic seco del gatillo con el cargador vacío.
+const EMPTY_SOUNDS: [&str; 2] = ["assets/vacio.ogg", "assets/vacio.wav"];
+
+/// Zumbido de los enemigos. **Suena siempre en loop** y su volumen sube al
+/// acercarse: es la pista de que hay uno cerca antes de verlo.
+const ENEMY_AMBIENT: [&str; 3] = [
+    "assets/enemigo.ogg",
+    "assets/enemigo.mp3",
+    "assets/enemigo.wav",
+];
+const ENEMY_AMBIENT_VOLUME: f32 = 0.9;
+/// Desde cuántas celdas se empieza a oír al enemigo más cercano.
+const ENEMY_HEAR_RANGE: f32 = 7.0;
 
 /// Arma en pantalla. El segundo es el frame del fogonazo y es opcional.
 const WEAPON_IDLE: [&str; 2] = ["assets/arma.png", "assets/pistola.png"];
@@ -155,7 +168,7 @@ fn main() {
 
     let (mut window, thread) = raylib::init()
         .size(WINDOW_WIDTH, WINDOW_HEIGHT)
-        .title("Proyecto 1 - Raycaster")
+        .title(TITLE)
         .build();
     window.set_target_fps(60);
 
@@ -279,6 +292,18 @@ fn main() {
     let hurt_sound = audio
         .as_ref()
         .and_then(|d| load_sound(d, &HURT_SOUNDS, "dolor"));
+    let empty_sound = audio
+        .as_ref()
+        .and_then(|d| load_sound(d, &EMPTY_SOUNDS, "gatillo vacío"));
+
+    // El zumbido arranca junto con el juego y no para nunca: lo que cambia es su
+    // volumen, no si está sonando.
+    let enemy_ambient = audio
+        .as_ref()
+        .and_then(|device| load_loop(device, &ENEMY_AMBIENT, 0.0, "zumbido de enemigos"));
+    if let Some(track) = &enemy_ambient {
+        track.play_stream();
+    }
 
     let mut combat = Combat::default();
     let mut gameover_choice = OVER_RETRY;
@@ -354,7 +379,13 @@ fn main() {
                         level.block_size,
                         aspect,
                     ) {
-                        ShotResult::Blocked => {}
+                        // Sin balas el gatillo hace clic: sin eso, disparar en
+                        // seco no se distingue de un juego colgado.
+                        ShotResult::Blocked => {
+                            if combat.ammo == 0 && !combat.reloading() {
+                                play(&empty_sound);
+                            }
+                        }
                         ShotResult::Missed => play(&shot_sound),
                         ShotResult::Hit { killed } => {
                             play(&shot_sound);
@@ -453,6 +484,21 @@ fn main() {
                     track.pause_stream();
                 }
             }
+        }
+
+        // El zumbido sigue al enemigo vivo más cercano, y se calla fuera del
+        // juego: en los menús no hay a quién temerle.
+        if let Some(track) = &enemy_ambient {
+            track.update_stream();
+            let cercania = if screen == Screen::Playing {
+                combat::proximity_volume(
+                    combat::nearest_alive(&level.enemies, player.pos),
+                    ENEMY_HEAR_RANGE * level.block_size as f32,
+                )
+            } else {
+                0.0
+            };
+            track.set_volume(cercania * ENEMY_AMBIENT_VOLUME);
         }
 
         if let Some(steps_clip) = &steps {
@@ -575,7 +621,7 @@ fn draw_menu(
     let alpha = (150.0 + 105.0 * blink) as u8;
     draw_centered_text(
         d,
-        "elegi un nivel",
+        "elige un nivel",
         y_frac(0.42),
         font(20.0),
         Color::new(0xE8, 0xC0, 0x50, alpha),

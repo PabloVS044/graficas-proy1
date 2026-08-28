@@ -204,9 +204,33 @@ pub fn update_enemies(
     hurt
 }
 
-/// Cuántos enemigos quedan vivos. La salida solo abre cuando esto es cero.
+/// Cuántos enemigos quedan vivos.
 pub fn remaining(enemies: &[Enemy]) -> usize {
     enemies.iter().filter(|e| e.alive()).count()
+}
+
+/// Distancia al enemigo vivo más cercano, o `None` si no queda ninguno.
+pub fn nearest_alive(enemies: &[Enemy], from: Vector2) -> Option<f32> {
+    enemies
+        .iter()
+        .filter(|e| e.alive())
+        .map(|e| (e.pos.x - from.x).hypot(e.pos.y - from.y))
+        .min_by(f32::total_cmp)
+}
+
+/// Qué tan fuerte se escucha el zumbido de los enemigos, de 0 a 1.
+///
+/// Cae con el cuadrado de la distancia y no de forma lineal: el oído percibe el
+/// volumen de manera logarítmica, así que una rampa lineal se siente como si el
+/// sonido apareciera de golpe cerca del final.
+pub fn proximity_volume(distance: Option<f32>, range: f32) -> f32 {
+    match distance {
+        None => 0.0,
+        Some(d) => {
+            let cerca = (1.0 - d / range).clamp(0.0, 1.0);
+            cerca * cerca
+        }
+    }
 }
 
 #[cfg(test)]
@@ -332,6 +356,41 @@ mod tests {
             0.016
         ));
         assert_eq!(combat.health, MAX_HEALTH);
+    }
+
+    #[test]
+    fn el_zumbido_sube_al_acercarse() {
+        let rango = 300.0;
+        let lejos = proximity_volume(Some(280.0), rango);
+        let medio = proximity_volume(Some(150.0), rango);
+        let encima = proximity_volume(Some(5.0), rango);
+        assert!(lejos < medio && medio < encima, "{lejos} {medio} {encima}");
+        assert!(encima <= 1.0);
+    }
+
+    #[test]
+    fn fuera_de_rango_y_sin_enemigos_no_suena() {
+        assert_eq!(proximity_volume(Some(400.0), 300.0), 0.0);
+        assert_eq!(proximity_volume(None, 300.0), 0.0);
+    }
+
+    #[test]
+    fn el_zumbido_sigue_al_enemigo_mas_cercano() {
+        let enemies = vec![
+            Enemy::new(Vector2::new(500.0, 0.0), 'e'),
+            Enemy::new(Vector2::new(50.0, 0.0), 'e'),
+        ];
+        let d = nearest_alive(&enemies, Vector2::new(0.0, 0.0)).unwrap();
+        assert_eq!(d, 50.0);
+    }
+
+    #[test]
+    fn los_muertos_no_zumban() {
+        let mut enemies = vec![Enemy::new(Vector2::new(50.0, 0.0), 'e')];
+        for _ in 0..3 {
+            enemies[0].hit();
+        }
+        assert!(nearest_alive(&enemies, Vector2::new(0.0, 0.0)).is_none());
     }
 
     #[test]

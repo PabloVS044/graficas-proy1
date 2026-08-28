@@ -292,6 +292,21 @@ el archivo fallaba en silencio y el juego caía al MP3 sin acelerar. La conversi
 ffmpeg -i assets/musica.mp3 -vn -af "atempo=2.0" -c:a libvorbis -q:a 5 assets/musica.ogg
 ```
 
+El **zumbido de los enemigos** (`assets/enemigo.ogg`) es un caso aparte: suena en loop
+desde que arranca el nivel y **nunca se detiene**; lo que cambia es su volumen, que sube al
+acercarse al enemigo vivo más cercano. Así el jugador escucha que hay uno cerca antes de
+doblar la esquina.
+
+La curva es **cuadrática**, no lineal (`combat::proximity_volume`): el oído percibe el
+volumen de forma logarítmica, y con una rampa lineal el sonido parece aparecer de golpe
+recién al final. Se apaga en los menús, donde no hay a quién temerle, y cuando no queda
+ningún enemigo vivo.
+
+El **disparo** está sintetizado con ffmpeg: ruido blanco filtrado que decae en 130 ms para
+el chasquido, mezclado con un seno de 90 Hz para el golpe del cuerpo. El clic del gatillo
+vacío es el mismo ruido, más corto y agudo — sin él, disparar sin balas no se distingue de
+un juego colgado.
+
 Los dos clips se cargan con el mismo `load_loop`, que recorre una lista de candidatos y se
 queda con el primero que exista — el mismo criterio que las texturas, así que agregar el
 archivo alcanza para que suene, sin tocar código. Todo es `Music` y no `Sound` incluso para
