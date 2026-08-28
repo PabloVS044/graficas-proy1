@@ -11,8 +11,6 @@ pueden eliminar, pero no es obligatorio; entrar en contacto con uno provoca una 
 
 [![Ver gameplay en YouTube](https://img.youtube.com/vi/FJGRuNkv-3I/hqdefault.jpg)](https://youtu.be/FJGRuNkv-3I)
 
-[Ver el gameplay en YouTube](https://youtu.be/FJGRuNkv-3I)
-
 ## Características
 
 - Raycasting con paredes texturizadas, corrección de ojo de pez y sombreado por distancia.
